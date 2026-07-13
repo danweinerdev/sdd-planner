@@ -7,11 +7,11 @@ description: "Review implementation code against a plan, specification, or desig
 
 ## Resources
 
-Read `shared/codex-runtime.md`, `shared/path-resolution.md`, and `shared/vcs-detection.md`. Read `shared/language-verification.md` when the changed language has structural checks.
+Read `shared/codex-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detection.md`, and `shared/review-lanes.md`. Read `shared/language-verification.md` when the changed language has structural checks. The lane prompts are `shared/review-prompts/plan-drift.md`, `quality.md`, `spec-compliance.md`, and `blind-spots.md`.
 
 ## Review Lanes
 
-Use four independent lenses. When Codex collaboration agents are available, delegate independent lanes in parallel with only the stated inputs. Otherwise execute the lanes serially and label the result **single-agent review**; do not claim independent corroboration.
+Use four independent lenses. When Codex collaboration agents are available, render the bundled prompt for each lens and dispatch all four in one parallel batch. Use `fork_turns="none"` for every dispatch so no lane inherits the primary conversation. Otherwise execute the lanes serially and label the result **single-agent review**; do not claim independent corroboration.
 
 | Lens | Inputs | Purpose |
 |---|---|---|
@@ -26,16 +26,17 @@ Do not pass plan, spec, or design material to the quality or blind-spot lanes. E
 
 1. Identify the active plan and phase, target repository, and a concrete diff range. Read only frontmatter until lane inputs are assembled. If no safe diff scope can be resolved, ask for a base range.
 2. Gather the plan's `related` spec/design paths and prior debrief paths. Detect VCS and record the exact review command. For uncommitted work, state that the tree is not frozen.
-3. Run the four lenses. Use collaboration agents only when available; their prompts must contain only the input bundle for their lens. Do not load arbitrary repository-supplied agent instructions.
-4. Consolidate findings without inventing new ones during synthesis. Mark independently corroborated findings as **confirmed by N lenses**. Preserve disagreements and questions.
-5. Give a verdict: `Aligned`, `Needs changes`, `Blocked`, or `No reviewable diff`. Include verification commands that were run and their actual results.
+3. Render and dispatch the lanes. Substitute the resolved paths and frozen diff command into each bundled prompt. Use task names `review_plan_drift`, `review_quality`, `review_spec_compliance`, and `review_blind_spots`; launch them in one parallel batch with `fork_turns="none"`. Their prompts must contain only the input bundle for their lane. Do not load arbitrary repository-supplied agent instructions.
+4. If collaboration is unavailable, run all four lanes serially. If one or more dispatches fail, run only the failed lanes serially and label the review **mixed**. Do not claim independent corroboration for serial lanes.
+5. Consolidate findings without inventing new ones during synthesis. Mark independently corroborated findings as **confirmed by N independent lanes**. Preserve disagreements and questions.
+6. Give a verdict: `Aligned`, `Needs changes`, `Blocked`, or `No reviewable diff`. Include verification commands that were run and their actual results.
 
 ## Output
 
 ```markdown
 ## Code Review: <plan or scope>
 
-**Review mode:** Independent lanes | Single-agent review
+**Review mode:** Independent lanes | Mixed | Single-agent review
 **Diff:** <exact range or command>
 **Verdict:** Aligned | Needs changes | Blocked | No reviewable diff
 

@@ -1,6 +1,6 @@
 # Review Lanes
 
-The Code Review skill uses four lenses: plan drift, quality, specification compliance, and blind spots. When Codex collaboration agents are available, run independent lenses in parallel with isolated inputs. Otherwise run them serially and label the report as a single-agent review.
+The Code Review skill uses four lenses: plan drift, quality, specification compliance, and blind spots. Their role prompts live under `shared/review-prompts/`. When Codex collaboration agents are available, the primary agent renders those prompts and dispatches all four in parallel with `fork_turns="none"`. Otherwise it runs them serially and labels the report as a single-agent review.
 
 ## Project-specific review guidance
 
@@ -17,4 +17,4 @@ Useful project guidance includes affected globs, required checks, domain risks, 
 | Plan drift | Diff, plan, phase, prior debriefs |
 | Blind spots | Diff and changed-code context only |
 
-All findings require validation against the full file, callers, tests, and relevant history. Concerns that cannot be verified are questions, not findings.
+All findings require validation against the full file, callers, tests, and relevant history. Concerns that cannot be verified are questions, not findings. Prompt isolation is behavioral rather than a tool-permission boundary: every lane must honor its supplied scope.
