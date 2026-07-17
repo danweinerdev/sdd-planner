@@ -30,6 +30,8 @@ Do not pass plan, spec, or design material to the quality or blind-spot lanes. E
 4. If collaboration is unavailable, run all four lanes serially. If one or more dispatches fail, run only the failed lanes serially and label the review **mixed**. Do not claim independent corroboration for serial lanes.
 5. Consolidate findings without inventing new ones during synthesis. Mark independently corroborated findings as **confirmed by N independent lanes**. Preserve disagreements and questions.
 6. Give a verdict: `Aligned`, `Needs changes`, `Blocked`, or `No reviewable diff`. Include verification commands that were run and their actual results.
+7. Persist the review per `shared/review-artifacts.md`: write `Plans/<Plan>/reviews/<NN>-<plan-slug>-code-review-<rev>.md` from `shared/templates/review.md`, with `rev` = the reviewed repo's short revision (`-dirty` when the tree wasn't frozen). Number the consolidated findings `F-NN`, mirror them in `findings[]`, and set `status: open`.
+8. If the user asks to address findings, follow `shared/review-artifacts.md`: mechanical fixes (determined by hard facts — an accepted `D-NNNN`, approved artifact text, verifiable fact) apply directly with the fact cited; design decisions stop for user discussion and land in the decision ledger; every disposition gets a Resolution Log entry; changed numbered elements trigger the reconciliation sweep; deferred findings become plan tasks or tracked `FU-NN` follow-ups.
 
 ## Output
 
@@ -51,4 +53,4 @@ Do not pass plan, spec, or design material to the quality or blind-spot lanes. E
 - `<command>`: <actual result>
 ```
 
-Do not modify source files unless the user asks to address findings.
+The inline report above is presented to the user; the same findings are persisted to the review artifact (step 7), which is the durable record. Do not modify source files unless the user asks to address findings (step 8).

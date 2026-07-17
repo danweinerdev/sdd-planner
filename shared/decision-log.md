@@ -63,6 +63,7 @@ A decision is recorded **after the user makes it**, at these moments:
 |---|---|
 | An open question is resolved at an approval gate | the Specify, Design, and Plan skills — each resolved question becomes an `answered-question` entry |
 | The user answers an escalation | the Implement skill's escalation rules — spec ambiguity, scope, destructive-action, blocked-task decisions |
+| The user resolves a review finding that required a design decision | the Poke Holes / Code Review resolution flow (`shared/review-artifacts.md`) — the chosen approach becomes an entry, cited in the Resolution Log |
 | The user accepts a brainstorm recommendation | the Brainstorm skill — the accepted approach becomes a `decision` entry (unaccepted recommendations stay out, or go in as `proposed`) |
 | The user defines a project concept or term | any context — a `definition` entry |
 | The user decides ad hoc in conversation | any context — the `decision-log` capture skill covers moments outside lifecycle skills |

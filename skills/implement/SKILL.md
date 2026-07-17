@@ -30,4 +30,4 @@ Ask the user before destructive or production-impacting operations, when require
 
 ## Output
 
-For each completed task report files changed, verification commands with actual results, status updates, and any deferred findings. Keep the plan artifact as the source of truth.
+For each completed task report files changed, verification commands with actual results, status updates, and any deferred findings. Deferred review findings are tracked per `shared/review-artifacts.md` (plan tasks or `FU-NN` follow-ups) — never left only in conversation. Keep the plan artifact as the source of truth.
