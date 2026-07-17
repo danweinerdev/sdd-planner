@@ -6,7 +6,7 @@ description: "Investigate a topic and produce a structured research document. re
 # Investigate a Topic
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need to gather and synthesize information about a topic before making decisions. Good for technology evaluations, understanding existing systems, or exploring unknowns.
@@ -18,7 +18,7 @@ When you need to gather and synthesize information about a topic before making d
    - Determine if this is codebase research, external research, or both
 
 2. **Gather Information**
-   - Use a Codex collaboration agent (if available) with the topic and questions
+   - Use a collaboration subagent (if available) with the topic and questions
    - The agent will scan existing artifacts, codebase, and web as needed
 
 3. **Synthesize**
@@ -49,4 +49,4 @@ See `shared/templates/research.md`:
 - Orchestration: `shared/orchestration.md`
 - Template: `shared/templates/research.md`
 - Schema: `shared/frontmatter-schema.md`
-- Agent: a Codex collaboration agent (if available)
+- Agent: a collaboration subagent (if available)

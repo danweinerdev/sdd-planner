@@ -2,7 +2,7 @@
 
 {{DESCRIPTION}}
 
-This repository keeps spec-driven development artifacts under `{{PLANNING_ROOT}}/`. Use the installed `codex-sdd-planner` skills by asking Codex for the relevant activity in natural language.
+This repository keeps spec-driven development artifacts under `{{PLANNING_ROOT}}/`. Use the installed `sdd-planner` skills by asking the agent for the relevant activity in natural language.
 
 ## Artifact Layout
 

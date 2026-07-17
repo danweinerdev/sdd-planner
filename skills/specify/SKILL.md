@@ -6,7 +6,7 @@ description: "Write a requirements specification for a feature. Do NOT enter pla
 # Write Requirements Specification
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need to define the requirements for a feature before designing or implementing it. Produces a testable, reviewable specification.
@@ -15,7 +15,7 @@ When you need to define the requirements for a feature before designing or imple
 
 1. **Gather Context**
    - If the user hasn't already specified it, ask what feature to specify
-   - Use a Codex collaboration agent (if available) to gather context from existing artifacts and codebase
+   - Use a collaboration subagent (if available) to gather context from existing artifacts and codebase
    - Review any related research or brainstorm documents
 
 2. **Draft Specification**
@@ -53,4 +53,4 @@ See `shared/templates/spec.md`:
 - Orchestration: `shared/orchestration.md`
 - Template: `shared/templates/spec.md`
 - Schema: `shared/frontmatter-schema.md`
-- Agents: a Codex collaboration agent (if available), an independent specification-review pass
+- Agents: a collaboration subagent (if available), an independent specification-review pass

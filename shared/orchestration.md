@@ -1,6 +1,6 @@
 # Orchestration Model
 
-The primary Codex agent owns user communication, approvals, scope decisions, and final synthesis. It may delegate independent reading, implementation, or review work to Codex collaboration agents when they are available.
+The primary agent owns user communication, approvals, scope decisions, and final synthesis. It may delegate independent reading, implementation, or review work to collaboration subagents when they are available.
 
 ## Principles
 

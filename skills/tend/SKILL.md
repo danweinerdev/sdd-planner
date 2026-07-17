@@ -6,7 +6,7 @@ description: "Artifact hygiene — verify statuses, unify tags, check convention
 # Artifact Hygiene
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 - Artifacts have accumulated and status is unclear
@@ -74,7 +74,7 @@ Ask for artifact hygiene across all modes, or name one mode: legacy layout migra
 
 All modes follow delegate-scan → review-findings → confirm → apply:
 
-1. **Scan**: Use a Codex collaboration agent (if available) to scan artifacts and gather findings (no changes made)
+1. **Scan**: Use a collaboration subagent (if available) to scan artifacts and gather findings (no changes made)
 2. **Report**: Primary context presents the agent's findings in categorized format
 3. **Confirm**: Wait for user decisions on proposed changes
 4. **Apply**: Make confirmed changes and report final state
@@ -84,7 +84,7 @@ Never skip confirmation for changes to existing content.
 ## Mode Details
 
 ### Status Mode
-Use a Codex collaboration agent (if available) to scan all plans under `Plans/` and compare status fields against reality. The agent returns a list of findings — what is stale, what is inconsistent, and what should be updated. Checks to perform:
+Use a collaboration subagent (if available) to scan all plans under `Plans/` and compare status fields against reality. The agent returns a list of findings — what is stale, what is inconsistent, and what should be updated. Checks to perform:
 - Plans with all phases complete but plan status is still `active` → suggest `complete`
 - Plans with status `active` but no phase has started → suggest reverting to `approved`
 - Phases where all tasks are complete but phase status is `in-progress` → suggest `complete`
@@ -95,14 +95,14 @@ Use a Codex collaboration agent (if available) to scan all plans under `Plans/` 
 **Refresh triggers**: Artifacts may declare an optional `refresh_when` frontmatter field — a list of event-shaped trigger descriptions (e.g., "dependency X ships v3", "Specs/Payments changes", "the vendor answers the webhooks question"). For artifacts that declare it: report each artifact with its triggers and ask the user which (if any) have fired — fired triggers make the artifact stale regardless of its `updated` date, and an artifact whose triggers have all demonstrably not fired is NOT stale even past 30 days. Artifacts without `refresh_when` keep the 30-day rule above. Where a trigger names another artifact (e.g., "Specs/Payments changes"), check that artifact's `updated` date yourself instead of asking.
 
 ### Tags Mode
-Use a Codex collaboration agent (if available) to scan all artifact frontmatter for tags and analyze for variants, orphans, missing tags, and clusters. The agent returns the analysis. Checks to perform:
+Use a collaboration subagent (if available) to scan all artifact frontmatter for tags and analyze for variants, orphans, missing tags, and clusters. The agent returns the analysis. Checks to perform:
 - **Variants**: Find tags that are likely the same thing (`api`/`APIs`/`rest-api`)
 - **Orphans**: Tags used in only one document (might be too specific)
 - **Missing**: Artifacts with empty tags that could be inferred from content
 - **Clusters**: Groups of artifacts that share tag patterns (reveals implicit categories)
 
 ### Filenames Mode
-Use a Codex collaboration agent (if available) to check naming conventions across all artifacts. The agent returns any violations found. Conventions to check (defined in AGENTS.md):
+Use a collaboration subagent (if available) to check naming conventions across all artifacts. The agent returns any violations found. Conventions to check (defined in AGENTS.md):
 - Plans: `Plans/<PlanName>/README.md`, phases `01-Phase-Name.md`
 - Specs: `Specs/<FeatureName>/README.md`
 - Designs: `Designs/<ComponentName>/README.md`
@@ -113,7 +113,7 @@ Use a Codex collaboration agent (if available) to check naming conventions acros
 - Phase numbering: zero-padded, sequential, no gaps
 
 ### Completeness Mode
-Use a Codex collaboration agent (if available) to check each artifact against `shared/frontmatter-schema.md`. The agent returns missing fields and empty sections. Checks to perform:
+Use a collaboration subagent (if available) to check each artifact against `shared/frontmatter-schema.md`. The agent returns missing fields and empty sections. Checks to perform:
 - Required frontmatter fields present (title, type, status, created, updated)
 - Body has expected sections per template
 - Plans have at least one phase defined
@@ -143,4 +143,4 @@ Modifies artifacts in place based on user-confirmed changes. No new artifacts cr
 - Orchestration: `shared/orchestration.md`
 - Schema: `shared/frontmatter-schema.md`
 - Conventions: `AGENTS.md`
-- Agent: a Codex collaboration agent (if available)
+- Agent: a collaboration subagent (if available)

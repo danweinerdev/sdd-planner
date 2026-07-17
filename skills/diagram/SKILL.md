@@ -6,7 +6,7 @@ description: "Generate Mermaid diagrams from plans, designs, or specs. draw a di
 # Generate Mermaid Diagrams
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need a visual representation of architecture, data flow, task dependencies, or system interactions. Produces Mermaid diagrams that render in GitHub, VS Code, and most markdown viewers.

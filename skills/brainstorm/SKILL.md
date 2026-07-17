@@ -6,7 +6,7 @@ description: "Explore possibilities for a problem or opportunity with structured
 # Explore Possibilities
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need to generate and evaluate multiple approaches to a problem before committing to one. Good for architecture decisions, feature approaches, or tool selection.
@@ -18,7 +18,7 @@ When you need to generate and evaluate multiple approaches to a problem before c
    - Clarify constraints and evaluation criteria
 
 2. **Gather Context**
-   - When available, delegate a bounded context scan to a Codex collaboration agent with the problem statement and constraints; it scans all artifact directories and the codebase per its own definition.
+   - When available, delegate a bounded context scan to a collaboration subagent with the problem statement and constraints; it scans all artifact directories and the codebase per its own definition.
    - The agent returns a structured summary of relevant context
 
 3. **Generate Ideas**
@@ -56,4 +56,4 @@ See `shared/templates/brainstorm.md`:
 - Orchestration: `shared/orchestration.md`
 - Template: `shared/templates/brainstorm.md`
 - Schema: `shared/frontmatter-schema.md`
-- Agent: a Codex collaboration agent (if available)
+- Agent: a collaboration subagent (if available)

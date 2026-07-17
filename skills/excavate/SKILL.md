@@ -6,7 +6,7 @@ description: "Progressive codebase discovery and documentation. excavate, explor
 # Progressive Codebase Discovery
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need to understand an unfamiliar codebase or subsystem before planning work against it. Produces research artifacts from systematic code exploration — not a quick scan, but a deep dive that builds on itself.
@@ -23,7 +23,7 @@ When you need to understand an unfamiliar codebase or subsystem before planning 
      - README/docs (understand intent)
 
 2. **Surface Survey**
-   - Use a Codex collaboration agent (if available) to scan the target codebase:
+   - Use a collaboration subagent (if available) to scan the target codebase:
      - Directory structure and file organization
      - Key modules/packages and their responsibilities
      - Entry points and public APIs
@@ -31,7 +31,7 @@ When you need to understand an unfamiliar codebase or subsystem before planning 
    - Map the high-level architecture: what talks to what
 
 3. **Depth Passes**
-   Work through the codebase layer by layer. For each pass, use a Codex collaboration agent when available, passing the prior pass's findings as context. Otherwise perform the pass directly. Review each pass's summary before steering the next one.
+   Work through the codebase layer by layer. For each pass, use a collaboration subagent when available, passing the prior pass's findings as context. Otherwise perform the pass directly. Review each pass's summary before steering the next one.
 
    **Pass 1: Structure**
    - Module boundaries and dependency graph
@@ -83,5 +83,5 @@ Research/<codebase-or-subsystem-slug>.md
 - Orchestration: `shared/orchestration.md`
 - Template: `shared/templates/research.md`
 - Schema: `shared/frontmatter-schema.md`
-- Agent: a Codex collaboration agent (if available)
+- Agent: a collaboration subagent (if available)
 - Local repo paths: `planning-config.local.json`

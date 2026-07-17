@@ -10,7 +10,7 @@ Artifacts (`Research/`, `Brainstorm/`, `Specs/`, `Designs/`, `Plans/`, `Retro/`,
 
 ## Plugin resources
 
-Locate bundled resources as described in `shared/codex-runtime.md`. The `shared/` directory belongs to the installed plugin, never to the planning root.
+Locate bundled resources as described in `shared/agent-runtime.md`. The `shared/` directory belongs to the installed plugin, never to the planning root.
 
 ## Target repository
 

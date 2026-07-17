@@ -6,7 +6,7 @@ description: "Write after-action notes for a completed plan phase. debrief phase
 # After-Action Phase Notes
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When a plan phase has been completed (or substantially completed) and you want to capture what happened: decisions made, deviations from plan, lessons learned, and impact on future phases.
@@ -23,7 +23,7 @@ When a plan phase has been completed (or substantially completed) and you want t
    - Review the phase's tasks and subtasks for completion status
    - Read related designs from `Designs/` to identify deviations from intended architecture
    - Read related specs from `Specs/` to assess requirements coverage
-   - If more than ~3 related documents are involved, delegate the sweep to a Codex collaboration agent (if available) instead of reading them all yourself
+   - If more than ~3 related documents are involved, delegate the sweep to a collaboration subagent (if available) instead of reading them all yourself
    - Ask the user about:
      - Key decisions made during implementation
      - What deviated from the original plan or design
@@ -37,7 +37,7 @@ When a plan phase has been completed (or substantially completed) and you want t
    - Codebase operations that lacked a helper/script and had to be redone in each task
    - Checks or validations that should have been automated but were done mentally
 
-   For each opportunity, capture: what the repeated action was, where the skill should live (new Codex skill, a project-level Codex skill, a codebase helper, a shell script, a Makefile target), why a skill would help, and a rough shape (inputs, outputs, when to invoke).
+   For each opportunity, capture: what the repeated action was, where the skill should live (new skill, a project-level skill, a codebase helper, a shell script, a Makefile target), why a skill would help, and a rough shape (inputs, outputs, when to invoke).
 
    Ask the user to confirm or extend the list before writing — they may have noticed patterns you didn't.
 

@@ -6,7 +6,7 @@ description: "Create a technical architecture and design document. Do NOT enter 
 # Technical Architecture Document
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need to define the technical architecture for a component or system before implementation. Produces a reviewable design document with architecture decisions.
@@ -15,7 +15,7 @@ When you need to define the technical architecture for a component or system bef
 
 1. **Gather Context**
    - If the user hasn't already specified it, ask what component to design
-   - When available, delegate a bounded context scan to a Codex collaboration agent with the component and its constraints; it scans all artifact directories and the codebase per its own definition.
+   - When available, delegate a bounded context scan to a collaboration subagent with the component and its constraints; it scans all artifact directories and the codebase per its own definition.
    - Review any related research documents
 
 2. **Draft Design**
@@ -54,4 +54,4 @@ See `shared/templates/design.md`:
 - Orchestration: `shared/orchestration.md`
 - Template: `shared/templates/design.md`
 - Schema: `shared/frontmatter-schema.md`
-- Agents: a Codex collaboration agent (if available), an independent plan-review pass
+- Agents: a collaboration subagent (if available), an independent plan-review pass

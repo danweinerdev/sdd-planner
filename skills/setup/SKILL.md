@@ -7,7 +7,7 @@ description: "Set up spec-driven planning in a repository by creating planning-c
 
 ## Resources
 
-Read `shared/codex-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detection.md`, `shared/templates/agents-md-full.md`, and `shared/templates/agents-md-snippet.md`.
+Read `shared/agent-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detection.md`, `shared/templates/agents-md-full.md`, and `shared/templates/agents-md-snippet.md`.
 
 ## Process
 
@@ -17,7 +17,7 @@ Read `shared/codex-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detecti
 4. Create missing planning directories: `Plans/`, `Research/`, `Brainstorm/`, `Specs/`, `Designs/`, `Retro/`, and `Diagrams/`.
 5. For Git or Perforce, ensure the appropriate ignore file contains `Dashboard/` and `planning-config.local.json` without duplicating entries.
 6. Offer, but do not unprompted create, `AGENTS.md` guidance. Use the full template for a dedicated planning repository; append the snippet for an existing project. Preserve existing user instructions.
-7. Do not create Claude launchers, `CLAUDE.md`, `.claude/` folders, symlinks, or copied skill files. Codex discovers this plugin through its installation and marketplace configuration.
+7. Do not create Claude launchers, `CLAUDE.md`, `.claude/` folders, symlinks, or copied skill files. The runtime discovers these skills through its own skill-discovery paths (a plugin installation or the `.agents/skills` convention).
 
 ## Output
 

@@ -6,7 +6,7 @@ description: "Capture learnings and reflections in a retrospective. retrospectiv
 # Capture Learnings
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 After completing a significant piece of work (a plan, a sprint, a milestone) to capture what went well, what could be improved, and action items for the future.
@@ -32,7 +32,7 @@ After completing a significant piece of work (a plan, a sprint, a milestone) to 
    - Codebase operations that lacked automation and cost time in multiple tasks
    - Checks, validations, or reviews that happened mentally and should have been automated
 
-   For each opportunity, capture: the pattern and how often it came up, where the skill should live (new Codex skill, a project-level Codex skill, a codebase helper, a shell script, a Makefile target), why a skill helps, and a rough shape (inputs, outputs, when to invoke, which agents or tools it wraps). Include enough detail for a future session to act on it without re-deriving the context.
+   For each opportunity, capture: the pattern and how often it came up, where the skill should live (new skill, a project-level skill, a codebase helper, a shell script, a Makefile target), why a skill helps, and a rough shape (inputs, outputs, when to invoke, which agents or tools it wraps). Include enough detail for a future session to act on it without re-deriving the context.
 
    Ask the user to confirm, prune, or extend the list before writing.
 

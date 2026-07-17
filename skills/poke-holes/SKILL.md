@@ -6,7 +6,7 @@ description: "Adversarial critical analysis of plans, specs, or designs. poke ho
 # Adversarial Critical Analysis
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 When you need an **adversarial** critical review of a planning artifact before committing to it. Good for stress-testing plans before approval, finding gaps in specs, and challenging design assumptions. This is not a structural review (an independent plan-review pass and an independent specification-review pass handle that). This skill actively tries to break the thinking.
@@ -20,7 +20,7 @@ Think of it as the planning-artifact counterpart to an adversarial code-review p
    - Confirm the artifact path before proceeding
 
 2. **Gather Context**
-   Read the full target artifact yourself in the primary context (a single-artifact read is lightweight and the raw wording is the attack surface). Dispatch a Codex collaboration agent (if available) only for the *related-context sweep*:
+   Read the full target artifact yourself in the primary context (a single-artifact read is lightweight and the raw wording is the attack surface). Dispatch a collaboration subagent (if available) only for the *related-context sweep*:
    - Read all documents referenced in the target's `related` frontmatter
    - Search for any specs, designs, or plans that reference this artifact (by filename or title)
    - Return a structured summary containing:
@@ -104,7 +104,7 @@ No new artifact is created. This skill produces an inline analysis presented to 
 
 ## Context
 - Orchestration: `shared/orchestration.md`
-- Agent: a Codex collaboration agent (if available)
+- Agent: a collaboration subagent (if available)
 
 ## What This Is NOT
 - Not a structural review (that's what an independent plan-review pass and an independent specification-review pass does)

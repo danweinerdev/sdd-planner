@@ -1,6 +1,6 @@
 # {{REVIEWER_NAME}} Review Brief
 
-Use this content in `AGENTS.md` or provide it directly when requesting a Code Review skill run. Codex does not auto-register this file as a named agent.
+Use this content in `AGENTS.md` or provide it directly when requesting a Code Review skill run. Do not assume the runtime auto-registers this file as a named agent.
 
 ## Scope
 

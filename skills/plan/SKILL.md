@@ -6,7 +6,7 @@ description: "Create or expand a structured implementation plan with phases, tas
 # Create or Expand an Implementation Plan
 
 ## Path Resolution
-Read `shared/codex-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
+Read `shared/agent-runtime.md` to locate bundled resources, then read `shared/path-resolution.md` to resolve artifact and target-repository paths.
 
 ## When to Use
 - When you need to break down a feature, project, or initiative into an actionable plan with phases, tasks, subtasks, and verification criteria.
@@ -24,9 +24,9 @@ Both cases run through the same process below. The skill detects whether the nam
 
 If the existing plan's `status` is `complete` or `archived`, confirm with the user before revising it — those plans are usually frozen.
 
-### 2. Gather Context (delegated to a Codex collaboration agent (if available))
+### 2. Gather Context (delegated to a collaboration subagent (if available))
 
-Use a Codex collaboration agent (if available) and ask it to return a **structured** summary, not freeform notes:
+Use a collaboration subagent (if available) and ask it to return a **structured** summary, not freeform notes:
 
 - **Relevant requirements** — spec items under `Specs/` that this plan should cover
 - **Architectural constraints** — design decisions in `Designs/`, component boundaries, interfaces, contracts that constrain implementation
@@ -141,4 +141,4 @@ See `shared/frontmatter-schema.md` for the phase frontmatter schema. Body contai
 - Existing plans: `Plans/` (status in each plan's `README.md` frontmatter)
 - Related specs: `Specs/`
 - Related designs: `Designs/`
-- Agents: a Codex collaboration agent (if available), an independent plan-review pass, an implementation agent (if available) (rehearsal only)
+- Agents: a collaboration subagent (if available), an independent plan-review pass, an implementation agent (if available) (rehearsal only)

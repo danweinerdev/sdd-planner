@@ -7,7 +7,7 @@ description: "Simplify implemented code while preserving behavior. Use after imp
 
 ## Resources
 
-Read `shared/codex-runtime.md`, `shared/path-resolution.md`, and `shared/vcs-detection.md`.
+Read `shared/agent-runtime.md`, `shared/path-resolution.md`, and `shared/vcs-detection.md`.
 
 ## Process
 
@@ -22,4 +22,4 @@ Read `shared/codex-runtime.md`, `shared/path-resolution.md`, and `shared/vcs-det
 - Do not rewrite working code wholesale.
 - Do not call a change verified without command output.
 - Prefer existing project conventions over abstract cleanup preferences.
-- Do not rely on Claude agent names or plugin-defined worker roles.
+- Do not rely on runtime-specific agent names or plugin-defined worker roles.

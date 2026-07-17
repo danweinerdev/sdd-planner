@@ -1,6 +1,6 @@
 # Quality Review Brief
 
-Use this brief when delegating an intent-blind quality pass to a Codex collaboration agent.
+Use this brief when delegating an intent-blind quality pass to a collaboration subagent.
 
 ```markdown
 Review the following implementation changes for correctness, safety, maintainability, tests, and unnecessary complexity.

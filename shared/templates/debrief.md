@@ -46,11 +46,11 @@ Any changes needed to downstream phases.
 -
 
 ## Skill Opportunities
-Repeated actions during this phase that would benefit from becoming a reusable Codex skill, codebase utility, script, or saved query. Flag anything you did by hand more than once, or anything you expect to do again the next time a similar phase comes up.
+Repeated actions during this phase that would benefit from becoming a reusable skill, codebase utility, script, or saved query. Flag anything you did by hand more than once, or anything you expect to do again the next time a similar phase comes up.
 
 For each opportunity, note:
 - **What you did repeatedly** (the manual sequence or pattern)
-- **Where it belongs** (new Codex skill, project-level skill, codebase helper, shell script, Makefile target)
+- **Where it belongs** (new skill, project-level skill, codebase helper, shell script, Makefile target)
 - **Why a skill** (what pain does it remove, what consistency does it enforce)
 - **Rough shape** (inputs, outputs, when to invoke)
 
