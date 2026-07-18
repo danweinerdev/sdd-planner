@@ -29,6 +29,17 @@ decisions:
     confirmation: "Every SKILL.md states the resource boundary, shared/agent-runtime.md defines read-in-place behavior and failure handling, and setup forbids plugin-resource copies and symlinks."
     scope: [skills, shared/agent-runtime.md, shared/path-resolution.md]
     tags: [plugin-resources, workspace-boundary, read-in-place]
+  - id: D-0003
+    kind: decision
+    status: accepted
+    date: 2026-07-18
+    decided_by: user
+    statement: "Completed repository changes must be recorded in clean, scoped commits."
+    rejected: ["Leave completed changes uncommitted", "Mix unrelated changes in one commit"]
+    rationale: "Clean commits preserve reviewability and make completed work easy to trace or revert."
+    confirmation: "At completion, inspect status and diff, commit only intended files with a repository-style message, and confirm the worktree is clean."
+    scope: []
+    tags: [git, commits, workflow]
 ---
 
 # Decision Ledger
