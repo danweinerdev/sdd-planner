@@ -5,9 +5,13 @@ description: "Recording user decisions as durable truth in the decision ledger. 
 
 # Decision Log — Capture and Collision Discipline
 
-The full convention (entry schema, lifecycle rules, collision procedure, distribution rules) lives in `shared/decision-log.md` — read it before your first ledger write of a session. This skill exists so decision moments *outside* the lifecycle skills still reach the ledger.
+Before opening `shared/...`, follow symlinks in this loaded file's path, then derive `<plugin-root>` from `<plugin-root>/skills/<name>/SKILL.md`; fallback search roots are repository/user `.agents/` (including `$HOME/.agents/plugins/*/`), Codex `${CODEX_HOME:-$HOME/.codex}/plugins/cache/*/*/*/`, and runtime-configured skill roots. Accept only a root containing this skill, `shared/agent-runtime.md`, and the matching plugin manifest; never use the working directory. Read `<plugin-root>/shared/agent-runtime.md` first.
 
-Resolve the ledger per `shared/decision-log.md` § Ledger location — `<planning-root>/Decisions/decisions.md` for an in-repo planning root, `<repo-root>/DECISIONS.md` when the planning root is external (decisions live with the repo they represent). Create it from `shared/templates/decision-log.md` if missing.
+**Resource boundary:** Read the plugin, all `SKILL.md` files, and `shared/` resources in place. Never copy or symlink them into the working directory, target repository, or planning root. Only generated SDD outputs may be materialized from bundled resources.
+
+The full convention (entry schema, lifecycle rules, collision procedure, distribution rules) lives in `<plugin-root>/shared/decision-log.md` — read it before your first ledger write of a session. This skill exists so decision moments *outside* the lifecycle skills still reach the ledger.
+
+Resolve the ledger per `<plugin-root>/shared/decision-log.md` § Ledger location — `<planning-root>/Decisions/decisions.md` for an in-repo planning root, `<repo-root>/DECISIONS.md` when the planning root is external (decisions live with the repo they represent). Create it from `<plugin-root>/shared/templates/decision-log.md` if missing.
 
 ## When the user just decided something
 

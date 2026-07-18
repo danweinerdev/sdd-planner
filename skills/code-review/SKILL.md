@@ -7,7 +7,9 @@ description: "Review implementation code against a plan, specification, or desig
 
 ## Resources
 
-Read `shared/agent-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detection.md`, and `shared/review-lanes.md`. Read `shared/language-verification.md` when the changed language has structural checks. The lane prompts are `shared/review-prompts/plan-drift.md`, `quality.md`, `spec-compliance.md`, and `blind-spots.md`.
+Before opening `shared/...`, follow symlinks in this loaded file's path, then derive `<plugin-root>` from `<plugin-root>/skills/<name>/SKILL.md`; fallback search roots are repository/user `.agents/` (including `$HOME/.agents/plugins/*/`), Codex `${CODEX_HOME:-$HOME/.codex}/plugins/cache/*/*/*/`, and runtime-configured skill roots. Accept only a root containing this skill, `shared/agent-runtime.md`, and the matching plugin manifest; never use the working directory. Then read `<plugin-root>/shared/agent-runtime.md`, `<plugin-root>/shared/path-resolution.md`, `<plugin-root>/shared/vcs-detection.md`, and `<plugin-root>/shared/review-lanes.md`. Read `<plugin-root>/shared/language-verification.md` when the changed language has structural checks. The lane prompts are under `<plugin-root>/shared/review-prompts/`: `plan-drift.md`, `quality.md`, `spec-compliance.md`, and `blind-spots.md`.
+
+**Resource boundary:** Read the plugin, all `SKILL.md` files, and `shared/` resources in place. Never copy or symlink them into the working directory, target repository, or planning root. Only generated SDD outputs may be materialized from bundled resources.
 
 ## Review Lanes
 

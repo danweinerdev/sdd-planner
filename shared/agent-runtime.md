@@ -8,9 +8,21 @@ Throughout this plugin, *collaboration subagent* means whatever delegation mecha
 
 ## Plugin resources
 
-The plugin root is the directory containing `skills/` and `shared/`. When a skill needs a bundled template or reference, resolve it relative to the loaded skill's path: `<plugin-root>/skills/<skill-name>/SKILL.md`. Read the needed file under `<plugin-root>/shared/`; never look in runtime caches or tool-specific plugin directories.
+`shared/...` is a plugin-root-qualified logical path. It is never relative to the process working directory, planning root, target repository, or `skills/<skill-name>/` directory.
 
-If the runtime does not expose the loaded skill path, search for the unique sibling pair `skills/<skill-name>/SKILL.md` and `shared/frontmatter-schema.md` in the available skill directories. Do not select a version by cache ordering.
+**Resource boundary:** The installed plugin tree is read-only workflow input. Never copy, sync, vendor, scaffold, or symlink the plugin, its `skills/`, any `SKILL.md`, or its `shared/` resources into the working directory, target repository, or planning root. Read all bundled files in place from `<plugin-root>`. Bundled templates may produce generated SDD artifacts and SDD configuration/guidance in the workspace; the template source stays in the plugin. Skills whose declared purpose includes source changes may still edit target code, but no skill may install plugin material into the target.
+
+If a bundled resource cannot be read from the resolved plugin root, stop and report the missing or inaccessible installation. Copying the resource into the workspace is not a fallback.
+
+Resolve `<plugin-root>` in this order:
+
+1. Use the absolute path of the loaded skill when the runtime exposes it. Canonicalize the path by following symlinks before ascending from `<plugin-root>/skills/<skill-name>/SKILL.md` to the directory containing the sibling `skills/` and `shared/` directories. OpenCode installations commonly expose `$HOME/.agents/skills/<skill-name>` as a symlink into `$HOME/.agents/plugins/<plugin>/skills/<skill-name>`; the latter identifies the plugin root.
+2. Otherwise search the runtime's active skill locations for `skills/<skill-name>/SKILL.md`, canonicalizing every candidate before deriving its root. Standard locations include repository and user Agent Skills roots (`.agents/` and `$HOME/.agents/`), OpenCode plugin sources under `$HOME/.agents/plugins/<plugin>/`, runtime-configured skill roots, and Codex's installed plugin cache at `${CODEX_HOME:-$HOME/.codex}/plugins/cache/<marketplace>/<plugin>/<version>/`.
+3. Accept a candidate only when it contains all of `skills/<skill-name>/SKILL.md`, `shared/agent-runtime.md`, and `.codex-plugin/plugin.json`, and the manifest's `name` is `codex-sdd-planner`.
+
+After resolving the root, expand every `shared/<path>` reference to `<plugin-root>/shared/<path>`. Pass these resolved absolute paths to collaboration subagents; do not make a subagent repeat discovery.
+
+If multiple candidates remain and the loaded skill path or active runtime configuration does not identify one, stop and report the ambiguity. Never choose by current directory, cache ordering, modification time, or highest-looking version.
 
 ## Delegation
 

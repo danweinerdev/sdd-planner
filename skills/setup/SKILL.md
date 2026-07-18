@@ -7,7 +7,9 @@ description: "Set up spec-driven planning in a repository by creating planning-c
 
 ## Resources
 
-Read `shared/agent-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detection.md`, `shared/templates/agents-md-full.md`, and `shared/templates/agents-md-snippet.md`.
+Before opening `shared/...`, follow symlinks in this loaded file's path, then derive `<plugin-root>` from `<plugin-root>/skills/<name>/SKILL.md`; fallback search roots are repository/user `.agents/` (including `$HOME/.agents/plugins/*/`), Codex `${CODEX_HOME:-$HOME/.codex}/plugins/cache/*/*/*/`, and runtime-configured skill roots. Accept only a root containing this skill, `shared/agent-runtime.md`, and the matching plugin manifest; never use the working directory. Then read `<plugin-root>/shared/agent-runtime.md`, `<plugin-root>/shared/path-resolution.md`, `<plugin-root>/shared/vcs-detection.md`, `<plugin-root>/shared/templates/agents-md-full.md`, and `<plugin-root>/shared/templates/agents-md-snippet.md`.
+
+**Resource boundary:** Read the plugin, all `SKILL.md` files, and `shared/` resources in place. Never copy or symlink them into the working directory, target repository, or planning root. Only generated SDD outputs may be materialized from bundled resources.
 
 ## Process
 
@@ -17,7 +19,7 @@ Read `shared/agent-runtime.md`, `shared/path-resolution.md`, `shared/vcs-detecti
 4. Create missing planning directories: `Plans/`, `Research/`, `Brainstorm/`, `Specs/`, `Designs/`, `Decisions/`, `Retro/`, and `Diagrams/`.
 5. For Git or Perforce, ensure the appropriate ignore file contains `Dashboard/` and `planning-config.local.json` without duplicating entries.
 6. Offer, but do not unprompted create, `AGENTS.md` guidance. Use the full template for a dedicated planning repository; append the snippet for an existing project. Preserve existing user instructions.
-7. Do not create Claude launchers, `CLAUDE.md`, `.claude/` folders, symlinks, or copied skill files. The runtime discovers these skills through its own skill-discovery paths (a plugin installation or the `.agents/skills` convention).
+7. Do not create Claude launchers, `CLAUDE.md`, `.claude/` folders, plugin symlinks, or copies of the plugin, skills, or shared resources. The runtime discovers and reads the installed plugin through its own skill-discovery paths; setup writes only SDD configuration, artifact directories, ignore entries, and user-approved `AGENTS.md` guidance to the target.
 
 ## Output
 

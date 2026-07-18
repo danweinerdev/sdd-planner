@@ -10,7 +10,7 @@ Artifacts (`Research/`, `Brainstorm/`, `Specs/`, `Designs/`, `Plans/`, `Retro/`,
 
 ## Plugin resources
 
-Locate bundled resources as described in `shared/agent-runtime.md`. The `shared/` directory belongs to the installed plugin, never to the planning root.
+Locate bundled resources as described in `shared/agent-runtime.md`. The `shared/` directory belongs to the installed plugin and is read in place; never copy or symlink it, the plugin, or skill files into the planning root or target repository. Templates under `shared/` may be rendered into generated SDD artifacts, but the template files remain under `<plugin-root>/shared/`.
 
 ## Target repository
 
