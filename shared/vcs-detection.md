@@ -2,7 +2,7 @@
 
 How to determine the version-control system rooted at a given directory, and which command to use for common file/history operations once you know.
 
-This file is a shared spec — `setup` and any skill or agent that inspects files or history reads it before reaching for `git`. Don't hard-code `git` in skills; check the VCS first.
+This file is a shared spec — `sdd-setup` and any skill or agent that inspects files or history reads it before reaching for `git`. Don't hard-code `git` in skills; check the VCS first.
 
 ## Result labels
 

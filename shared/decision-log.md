@@ -44,7 +44,7 @@ decisions:
 | `rationale` | yes | one or two sentences; deeper deliberation goes in a body section |
 | `question` | for `answered-question` | verbatim or near-verbatim, so the same question is findable later |
 | `rejected`, `scope`, `tags` | recommended | these three power collision detection and scoped lookups |
-| `confirmation` | recommended | how a reviewer or the Tend skill checks the decision is still being honored — reviewers run or apply it when auditing coverage |
+| `confirmation` | recommended | how a reviewer or the `sdd-tend` skill checks the decision is still being honored — reviewers run or apply it when auditing coverage |
 | `supersedes`, `superseded_by`, `reversibility` | situational | supersession links are bidirectional — always write both |
 
 ### Lifecycle Rules (append-only)
@@ -61,21 +61,21 @@ A decision is recorded **after the user makes it**, at these moments:
 
 | Moment | Where |
 |---|---|
-| An open question is resolved at an approval gate | the Specify, Design, and Plan skills — each resolved question becomes an `answered-question` entry |
-| The user answers an escalation | the Implement skill's escalation rules — spec ambiguity, scope, destructive-action, blocked-task decisions |
-| The user resolves a review finding that required a design decision | the Poke Holes / Code Review resolution flow (`shared/review-artifacts.md`) — the chosen approach becomes an entry, cited in the Resolution Log |
-| The user accepts a brainstorm recommendation | the Brainstorm skill — the accepted approach becomes a `decision` entry (unaccepted recommendations stay out, or go in as `proposed`) |
+| An open question is resolved at an approval gate | the `sdd-specify`, `sdd-design`, and `sdd-plan` skills — each resolved question becomes an `answered-question` entry |
+| The user answers an escalation | the `sdd-implement` skill's escalation rules — spec ambiguity, scope, destructive-action, blocked-task decisions |
+| The user resolves a review finding that required a design decision | the `sdd-poke-holes` / `sdd-code-review` resolution flow (`shared/review-artifacts.md`) — the chosen approach becomes an entry, cited in the Resolution Log |
+| The user accepts a brainstorm recommendation | the `sdd-brainstorm` skill — the accepted approach becomes a `decision` entry (unaccepted recommendations stay out, or go in as `proposed`) |
 | The user defines a project concept or term | any context — a `definition` entry |
-| The user decides ad hoc in conversation | any context — the `decision-log` capture skill covers moments outside lifecycle skills |
-| A debrief captures decisions never logged | the Debrief skill backfills "Decisions Made" items as entries |
+| The user decides ad hoc in conversation | any context — the `sdd-decision-log` capture skill covers moments outside lifecycle skills |
+| A debrief captures decisions never logged | the `sdd-debrief` skill backfills "Decisions Made" items as entries |
 
 Rules of capture:
 
 - **Making the decision is the user's; writing the entry is autonomous** (it's a template-following artifact write per `shared/autonomy.md`). Draft the entry, show it in-flow (a short block, not a modal ceremony), and append. `decided_by: user` requires the user actually stated the choice; an agent inference the user merely didn't object to is `proposed`, not `accepted`.
 - **Record decisions, not events.** "We chose PostgreSQL over DynamoDB for X" is an entry; "phase 2 completed" is not. Test: would a future session act differently for knowing this?
 - **Don't double-log.** Prose sections (Key Decisions, Design Decisions, Decisions Made) still exist for narrative; the ledger entry is the machine-readable pointer of record. Cross-reference the artifact in `scope` rather than duplicating its full deliberation.
-- **Cite ids in governed artifacts (bidirectional linking).** When an artifact section is governed by a ledger entry, cite the id inline — e.g., `## Key Decisions` … `Use JWT for session tokens (D-0010)`. The entry points at the artifact via `scope`; the artifact points back via the citation. The supersession cascade and the Tend skill's stale-citation check grep for these ids — without citations they are blind.
-- **Capture guarantee, stated honestly.** Capture at the structured moments (approval gates, escalations, debrief backfill) is reliable — it's written into the skills. Ad-hoc conversational capture depends on the runtime loading the `decision-log` capture skill from its description, which is best-effort; the Decide skill is the manual recovery path and the Tend skill's `decisions` mode the periodic net. Do not present conversational capture as guaranteed.
+- **Cite ids in governed artifacts (bidirectional linking).** When an artifact section is governed by a ledger entry, cite the id inline — e.g., `## Key Decisions` … `Use JWT for session tokens (D-0010)`. The entry points at the artifact via `scope`; the artifact points back via the citation. The supersession cascade and the `sdd-tend` skill's stale-citation check grep for these ids — without citations they are blind.
+- **Capture guarantee, stated honestly.** Capture at the structured moments (approval gates, escalations, debrief backfill) is reliable — it's written into the skills. Ad-hoc conversational capture depends on the runtime loading the `sdd-decision-log` capture skill from its description, which is best-effort; the `sdd-decide` skill is the manual recovery path and the `sdd-tend` skill's `decisions` mode the periodic net. Do not present conversational capture as guaranteed.
 
 ## Collision Detection — before every append
 
@@ -114,6 +114,6 @@ Sequential ids and a single ledger file assume **one writer at a time**. Two con
 
 ## Hygiene
 
-The Tend skill's `decisions` mode checks: collisions among `accepted` entries using the scope-overlap definition above (the append-time check can miss pairs that predate it), superseded entries still cited by live artifacts (grep for ids), `scope` references to artifacts that no longer exist, prose decision sections never promoted to the ledger, `proposed` entries older than 30 days, `assumption` entries whose `refresh_when` triggers have fired (an invalidated assumption is reconciled like a collision), duplicate-id repair (above), and malformed entries (missing required fields, broken supersession links).
+The `sdd-tend` skill's `decisions` mode checks: collisions among `accepted` entries using the scope-overlap definition above (the append-time check can miss pairs that predate it), superseded entries still cited by live artifacts (grep for ids), `scope` references to artifacts that no longer exist, prose decision sections never promoted to the ledger, `proposed` entries older than 30 days, `assumption` entries whose `refresh_when` triggers have fired (an invalidated assumption is reconciled like a collision), duplicate-id repair (above), and malformed entries (missing required fields, broken supersession links).
 
-**Rotation:** when the ledger grows past ~100 entries, the Tend skill's `decisions` mode offers to move `superseded` and `rejected` entries to `Decisions/archive-<YYYY>.md` (type `decision-log`, status `archived`). Ids stay unique across live ledger and archives. `accepted` and `proposed` entries never rotate. The collision candidate filter greps `Decisions/archive-*.md` too — archived `rejected` entries are still negative truths; only session onboarding is limited to the live ledger.
+**Rotation:** when the ledger grows past ~100 entries, the `sdd-tend` skill's `decisions` mode offers to move `superseded` and `rejected` entries to `Decisions/archive-<YYYY>.md` (type `decision-log`, status `archived`). Ids stay unique across live ledger and archives. `accepted` and `proposed` entries never rotate. The collision candidate filter greps `Decisions/archive-*.md` too — archived `rejected` entries are still negative truths; only session onboarding is limited to the live ledger.

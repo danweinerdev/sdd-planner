@@ -7,8 +7,8 @@ Cross-skill view of what runs autonomously versus what stops for the user. Each 
 | Work | Notes |
 |---|---|
 | Reads, searches, agent dispatch | Including parallel waves and resumes |
-| Artifact writes that follow templates and scripted status transitions | `/plan` writing `draft`, `/implement` flipping task statuses, etc. |
-| Wave-to-wave progression in `/implement` | Unless unresolved critical findings are pending end-of-wave escalation |
+| Artifact writes that follow templates and scripted status transitions | `sdd-plan` writing `draft`, `sdd-implement` flipping task statuses, etc. |
+| Wave-to-wave progression in `sdd-implement` | Unless unresolved critical findings are pending end-of-wave escalation |
 | Retries within budget | One resume with clarified guidance after a failure (2 attempts total) |
 | Non-critical review findings | Collected and presented at end of wave, work continues |
 
@@ -16,13 +16,13 @@ Cross-skill view of what runs autonomously versus what stops for the user. Each 
 
 | Decision | Where it's enforced |
 |---|---|
-| Destructive actions — deleting data, prod config, shared systems | `/implement` escalation rules; `code-implementer` |
-| Approval transitions — spec/design/plan `approved` | `/specify`, `/design`, `/plan`; explicit user sign-off only |
-| Gated scope — in-scope work depends on an unanswered external question | `/plan`, `/specify`, `/design`; reviewers flag as Critical |
-| Plan-vs-reality mismatch — the plan describes a codebase that doesn't exist as written | `code-implementer` STOPs; `/implement` surfaces, never patches around it |
+| Destructive actions — deleting data, prod config, shared systems | `sdd-implement` escalation rules; `code-implementer` |
+| Approval transitions — spec/design/plan `approved` | `sdd-specify`, `sdd-design`, `sdd-plan`; explicit user sign-off only |
+| Gated scope — in-scope work depends on an unanswered external question | `sdd-plan`, `sdd-specify`, `sdd-design`; reviewers flag as Critical |
+| Plan-vs-reality mismatch — the plan describes a codebase that doesn't exist as written | `code-implementer` STOPs; `sdd-implement` surfaces, never patches around it |
 | Spec amendment — a contract test can only pass by weakening the assertion | `code-implementer` STOPs; `spec-compliance` flags as Critical |
-| Scope expansion discovered mid-implementation | `/implement` escalation rules |
-| Critical findings unresolved after 2 review-fix cycles | `/implement` — task `blocked`, no next wave without a decision |
+| Scope expansion discovered mid-implementation | `sdd-implement` escalation rules |
+| Critical findings unresolved after 2 review-fix cycles | `sdd-implement` — task `blocked`, no next wave without a decision |
 | Target repo unresolvable | `shared/path-resolution.md` — ask, never guess or clone |
-| External review lanes on a repo that isn't the session's project | `/code-review` trust gate |
-| Rehearsal opt-in for high-risk plans | `/plan` — costs real implementation spend |
+| External review lanes on a repo that isn't the session's project | `sdd-code-review` trust gate |
+| Rehearsal opt-in for high-risk plans | `sdd-plan` — costs real implementation spend |

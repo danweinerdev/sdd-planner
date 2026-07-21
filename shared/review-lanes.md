@@ -1,6 +1,6 @@
 # Review Lanes
 
-The Code Review skill uses four lenses: plan drift, quality, specification compliance, and blind spots. Their role prompts live under `shared/review-prompts/`. When collaboration subagents are available, the primary agent renders those prompts and dispatches all four in one parallel batch, each in a fresh context that does not inherit the primary conversation (use the runtime's isolation option when dispatch would otherwise fork the conversation). Otherwise it runs them serially and labels the report as a single-agent review.
+The `sdd-code-review` skill uses four lenses: plan drift, quality, specification compliance, and blind spots. Their role prompts live under `shared/review-prompts/`. When collaboration subagents are available, the primary agent renders those prompts and dispatches all four in one parallel batch, each in a fresh context that does not inherit the primary conversation (use the runtime's isolation option when dispatch would otherwise fork the conversation). Otherwise it runs them serially and labels the report as a single-agent review.
 
 ## Project-specific review guidance
 

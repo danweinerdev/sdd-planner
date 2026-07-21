@@ -18,4 +18,4 @@ related: [{{SOURCE_ARTIFACT}}]
 ```
 
 ## Source
-Generated from {{SOURCE_ARTIFACT}} on {{DATE}}. Regenerate with the diagram skill when the source changes.
+Generated from {{SOURCE_ARTIFACT}} on {{DATE}}. Regenerate with the `sdd-diagram` skill when the source changes.

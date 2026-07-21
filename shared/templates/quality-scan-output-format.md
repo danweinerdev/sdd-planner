@@ -1,6 +1,6 @@
 # Quality Review Output Format — Canonical Vocabulary
 
-This file is the single source of truth for quality-review vocabulary: severity terms, lenses, validation discipline, and required evidence. It does not mandate one report shape; the Code Review skill and per-task findings may use different shapes while preserving this vocabulary.
+This file is the single source of truth for quality-review vocabulary: severity terms, lenses, validation discipline, and required evidence. It does not mandate one report shape; the `sdd-code-review` skill and per-task findings may use different shapes while preserving this vocabulary.
 
 Reference this file from `shared/templates/quality-scan-prompt.md` and `shared/templates/per-task-findings.md`. Treat it as a contract.
 

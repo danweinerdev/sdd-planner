@@ -12,10 +12,10 @@ When a project uses multiple languages, apply each relevant file.
 
 ## Skill Integration
 
-- **Design** — include relevant tools in the Testing Strategy section
-- **Plan** — include in task `verification` fields where appropriate (both when creating a new plan and when expanding an existing one)
-- **Implement** — run these checks as part of verifying task completion
-- **Code Review** — check that structural verification was actually performed
+- **`sdd-design`** — include relevant tools in the Testing Strategy section
+- **`sdd-plan`** — include in task `verification` fields where appropriate (both when creating a new plan and when expanding an existing one)
+- **`sdd-implement`** — run these checks as part of verifying task completion
+- **`sdd-code-review`** — check that structural verification was actually performed
 
 ## Languages
 

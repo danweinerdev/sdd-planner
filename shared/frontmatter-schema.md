@@ -18,7 +18,7 @@ related: [Specs/FeatureName, Research/topic-slug.md]
 
 `related` entries are planning-root-relative: use the **directory** path for specs, designs, and plans (`Specs/FeatureName`, `Designs/ComponentName`, `Plans/PlanName`), and the **file** path for flat artifacts (`Research/topic-slug.md`, `Brainstorm/topic-slug.md`, `Retro/YYYY-MM-DD-slug.md`, `Diagrams/slug.md`). Consumers that need the document behind a directory entry append `/README.md`.
 
-Any artifact may additionally declare an optional `refresh_when` field — a list of event-shaped trigger descriptions that force a refresh (e.g., `refresh_when: ["dependency X ships v3", "Specs/Payments changes", "vendor answers the webhooks question"]`). `/tend` checks these: a fired trigger makes the artifact stale regardless of its `updated` date; demonstrably-unfired triggers exempt it from the default 30-day staleness rule.
+Any artifact may additionally declare an optional `refresh_when` field — a list of event-shaped trigger descriptions that force a refresh (e.g., `refresh_when: ["dependency X ships v3", "Specs/Payments changes", "vendor answers the webhooks question"]`). `sdd-tend` checks these: a fired trigger makes the artifact stale regardless of its `updated` date; demonstrably-unfired triggers exempt it from the default 30-day staleness rule.
 
 ## Status Values by Type
 
@@ -55,7 +55,7 @@ Rules:
 
 - **Ids are append-only and never renumbered.** Removing an item leaves its id retired (strike the line or note "removed — see <reason/citation>") so existing cross-references never silently re-bind to a different item.
 - **Cross-reference by id.** A plan task's `verification` (or its body section) names the `AC-NN`/`FR-NN` ids it satisfies; a design section that realizes a requirement cites its `FR-NN`; governed sections cite ledger ids (`D-NNNN`) per `shared/decision-log.md`. These citations are what make drift detectable — without them every reconciliation check is blind.
-- **Changing a numbered element is a reconciliation event**: after editing it, grep the other artifacts for its id and update or flag every citing site (same pattern as the decision ledger's supersession cascade). The Tend skill's completeness mode audits for unnumbered elements and dangling id citations.
+- **Changing a numbered element is a reconciliation event**: after editing it, grep the other artifacts for its id and update or flag every citing site (same pattern as the decision ledger's supersession cascade). The `sdd-tend` skill's completeness mode audits for unnumbered elements and dangling id citations.
 
 ## Review Artifact Schema
 
@@ -147,7 +147,7 @@ Implementation notes...
 
 ### Trap
 Optional — only for tasks with a known tempting-but-wrong shortcut. Names
-the shortcut a hasty implementer would take and why it's wrong. /implement
+the shortcut a hasty implementer would take and why it's wrong. `sdd-implement`
 passes it verbatim to the implementer's dispatch.
 ```
 
@@ -172,7 +172,7 @@ related: []
 
 ## Status Color Coding
 
-Used by `/diagram`'s status styling (`classDef` colors):
+Used by `sdd-diagram`'s status styling (`classDef` colors):
 
 - `complete` / `approved` / `implemented` -> green
 - `in-progress` / `active` / `review` -> amber

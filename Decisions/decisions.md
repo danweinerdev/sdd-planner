@@ -3,7 +3,7 @@ title: "Decision Ledger"
 type: decision-log
 status: active
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-21
 tags: [decisions]
 related: []
 decisions:
@@ -40,6 +40,17 @@ decisions:
     confirmation: "At completion, inspect status and diff, commit only intended files with a repository-style message, and confirm the worktree is clean."
     scope: []
     tags: [git, commits, workflow]
+  - id: D-0004
+    kind: decision
+    status: accepted
+    date: 2026-07-21
+    decided_by: user
+    statement: "Every public sdd-planner skill name and installation directory uses the sdd- prefix, with no unprefixed compatibility aliases."
+    rejected: ["Keep generic unprefixed skill names", "Use the longer sdd-planner- prefix"]
+    rationale: "The sdd- prefix identifies ownership and prevents collisions in global skill discovery while remaining concise."
+    confirmation: "Every skills/* directory and SKILL.md name starts with sdd-, and installed ~/.agents/skills links expose no legacy short-form sdd-planner names."
+    scope: [skills, README.md]
+    tags: [skill-names, namespace, installation]
 ---
 
 # Decision Ledger

@@ -30,10 +30,10 @@ This repository keeps spec-driven development artifacts under `{{PLANNING_ROOT}}
 
 ## Lifecycle
 
-Use these skills as needed: setup, research, brainstorm, specify, design, plan, implement, code review, simplify, debrief, retro, poke holes, tend, diagram, and excavate.
+Use these skills as needed: `sdd-setup`, `sdd-research`, `sdd-brainstorm`, `sdd-specify`, `sdd-design`, `sdd-plan`, `sdd-implement`, `sdd-code-review`, `sdd-simplify`, `sdd-debrief`, `sdd-retro`, `sdd-poke-holes`, `sdd-tend`, `sdd-diagram`, and `sdd-excavate`.
 
-The normal progression is: setup -> research -> brainstorm -> specify -> design -> plan -> implement -> code review -> simplify -> debrief -> retro. It is valid to enter at any point when the corresponding artifacts already exist.
+The normal progression is: `sdd-setup` -> `sdd-research` -> `sdd-brainstorm` -> `sdd-specify` -> `sdd-design` -> `sdd-plan` -> `sdd-implement` -> `sdd-code-review` -> `sdd-simplify` -> `sdd-debrief` -> `sdd-retro`. It is valid to enter at any point when the corresponding artifacts already exist.
 
 ## Review And Execution
 
-Before implementation, confirm an approved plan has concrete verification criteria. During implementation, record command output for checks actually run. Use the Code Review skill before phase completion or merge when material code changed. For project-specific review requirements, keep a short trusted review brief in this `AGENTS.md`; do not rely on auto-discovered agent files.
+Before implementation, confirm an approved plan has concrete verification criteria. During implementation, record command output for checks actually run. Use the `sdd-code-review` skill before phase completion or merge when material code changed. For project-specific review requirements, keep a short trusted review brief in this `AGENTS.md`; do not rely on auto-discovered agent files.
