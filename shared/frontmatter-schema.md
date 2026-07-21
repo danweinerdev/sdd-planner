@@ -96,7 +96,7 @@ phases:
 ```
 
 Body contains: Overview, Architecture, Key Decisions, Dependencies, Open Questions (omit when empty — a plan cannot be `approved` while an in-scope question is unanswered).
-No status tables in the body — the dashboard reads phases from frontmatter.
+No status tables in the body — phases are read from frontmatter.
 
 ### Phase Doc (01-Phase-Title.md)
 
@@ -170,9 +170,9 @@ related: []
 ---
 ```
 
-## Dashboard Color Mapping
+## Status Color Coding
 
-Consumed by the companion `sdd-dashboard` plugin and by `/diagram`'s status styling (`classDef` colors):
+Used by `/diagram`'s status styling (`classDef` colors):
 
 - `complete` / `approved` / `implemented` -> green
 - `in-progress` / `active` / `review` -> amber

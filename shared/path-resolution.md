@@ -14,10 +14,4 @@ Locate bundled resources as described in `shared/agent-runtime.md`. The `shared/
 
 ## Target repository
 
-Plans can target another repository:
-
-1. Resolve `planning-config.json` `planMapping["<PlanName>"]` to a repository key.
-2. Resolve `planning-config.local.json` `repositories.<key>.path`.
-3. Verify that path exists.
-
-If any part is missing, ask for the target directory. Never guess or clone.
+Plans can target another repository. If specified, provide the target directory path directly.
