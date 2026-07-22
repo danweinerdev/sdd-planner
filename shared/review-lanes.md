@@ -1,6 +1,20 @@
 # Review Lanes
 
-The `sdd-code-review` skill uses four lenses: plan drift, quality, specification compliance, and blind spots. Their role prompts live under `shared/review-prompts/`. When collaboration subagents are available, the primary agent renders those prompts and dispatches all four in one parallel batch, each in a fresh context that does not inherit the primary conversation (use the runtime's isolation option when dispatch would otherwise fork the conversation). Otherwise it runs them serially and labels the report as a single-agent review.
+The `sdd-code-review` skill uses four lenses: plan drift, quality, specification compliance, and blind spots. Their role prompts live under `shared/review-prompts/`. When collaboration subagents with fresh non-inheriting contexts are available, the primary agent renders those prompts and dispatches all four in one parallel batch. A lane that cannot receive a fresh context runs serially instead; an intent-blind lane must never fork the primary conversation. When no lanes can be independently dispatched, the report is labeled single-agent review.
+
+## Stable dispatch identifiers
+
+| Lens | Dispatch identifier |
+|---|---|
+| Plan drift | `review_plan_drift` |
+| Quality | `review_quality` |
+| Spec compliance | `review_spec_compliance` |
+| Blind spots | `review_blind_spots` |
+
+These identifiers describe semantic work, not plugin-defined agents. A runtime
+adapter may map them to named workers, models, queues, or isolation mechanisms.
+The workflow must remain correct when no adapter exists and the primary agent
+performs the lanes serially.
 
 ## Project-specific review guidance
 

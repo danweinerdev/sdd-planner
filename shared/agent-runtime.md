@@ -28,6 +28,12 @@ If multiple candidates remain and the loaded skill path or active runtime config
 
 Use collaboration subagents only when they are available and a task is independent enough to benefit from parallel work. Do not depend on plugin-defined agent names, specific models, tool allowlists, or any particular delegation API. A skill must remain correct when performed by the primary agent alone.
 
+Skills may expose stable semantic dispatch identifiers for independent work.
+When a runtime provides a task name or description field, pass the identifier
+through unchanged so an external runtime adapter can select a worker. The
+identifier is not an agent name and does not change the required fallback to a
+transparent single-agent workflow.
+
 ## Project guidance
 
 Use `AGENTS.md` for optional repository-level guidance. Do not create, update, or discover `CLAUDE.md`, `.claude/`, or `~/.claude/` paths.

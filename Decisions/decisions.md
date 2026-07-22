@@ -3,7 +3,7 @@ title: "Decision Ledger"
 type: decision-log
 status: active
 created: 2026-07-18
-updated: 2026-07-21
+updated: 2026-07-22
 tags: [decisions]
 related: []
 decisions:
@@ -84,6 +84,17 @@ decisions:
     confirmation: "The sdd-validate skill invokes the bundled validator first, its dependency on PyYAML is declared, and automated fixtures cover valid and invalid artifact graphs."
     scope: [skills/sdd-validate, scripts, tests]
     tags: [validation, python, pyyaml, deterministic-checks]
+  - id: D-0008
+    kind: decision
+    status: accepted
+    date: 2026-07-22
+    decided_by: user
+    statement: "SDD code-review lanes expose stable runtime-neutral dispatch identifiers that runtime adapters may map to named agents and models without making sdd-planner depend on those agents, models, or a delegation API."
+    rejected: ["Embed OpenCode agent or model names in sdd-code-review", "Leave code-review lane dispatch labels implicit and unstable"]
+    rationale: "Stable semantic identifiers preserve portable SDD workflows while allowing capable runtimes to select cost- and capability-appropriate workers deterministically."
+    confirmation: "sdd-code-review and shared/review-lanes.md define the same exact lens-to-identifier mapping; tests enforce that mapping, runtime-neutral identifier text, and fresh-context/Mixed fallback language."
+    scope: [skills/sdd-code-review, shared/review-lanes.md, shared/agent-runtime.md, README.md]
+    tags: [code-review, dispatch, collaboration, runtime-neutral]
 ---
 
 # Decision Ledger

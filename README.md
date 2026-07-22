@@ -4,6 +4,11 @@
 
 Every capability is a plain `SKILL.md` skill with shared resources under `shared/` — no slash commands, named subagent types, runtime hooks, or model-specific instructions — so it works in any agent runtime that discovers `SKILL.md` skills, with any model. Public skill names use the `sdd-` prefix (`sdd-plan`, `sdd-implement`, `sdd-code-review`, and so on) to avoid collisions in global skill directories (D-0004):
 
+`sdd-code-review` exposes stable semantic identifiers for its four independent
+review lanes. Runtime adapters may map those identifiers to specialized workers
+or models, but the skill never names or depends on them and retains its serial
+single-agent fallback (D-0008).
+
 - **OpenCode**: point a skills discovery path at this repository (for example `ln -s <this-repo> ~/.agents`, so the skills resolve as `~/.agents/skills/<name>/SKILL.md`), or mount it there in a container.
 - **Codex**: install via the `codex-marketplace` repository, then install `codex-sdd-planner` from it. Start a new thread after installation so the skills are available.
 - Any other runtime that loads the `.agents/skills` convention or directory-sourced skills works the same way.
