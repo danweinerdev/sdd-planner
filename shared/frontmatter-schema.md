@@ -135,7 +135,7 @@ tasks:
 | `title` | yes | Human-readable task title |
 | `status` | yes | Task status (see status values above) |
 | `depends_on` | no | List of task IDs this task depends on |
-| `verification` | yes | How we know the work is good and complete — name each new or changed behavior to cover, not test counts. Where the check is commandable, include the exact command and expected observable output (e.g., `cargo test auth:: — 14 pass incl. the new refresh-expiry case`); prose-only criteria are for behavior no command can observe |
+| `verification` | yes | How we know the work is good and complete — name each new or changed behavior to cover, not test counts. Where the check is commandable, include the exact command and expected observable output (e.g., `cargo test auth:: — 14 pass incl. the new refresh-expiry case`); prose-only criteria are for behavior no command can observe. The task is also the normal implementation-commit boundary: it must be a complete, independently bisectable feature slice that leaves the repository buildable and its named checks passing (D-0012). |
 
 Body contains task detail sections keyed by task ID as headings:
 
@@ -147,7 +147,8 @@ Body contains task detail sections keyed by task ID as headings:
 - [ ] Subtask two
 
 ### Notes
-Implementation notes...
+Implementation notes, including the complete feature/capability that defines
+this task's clean bisectable commit boundary (D-0012)...
 
 ### Completion Evidence
 Pending — not complete.

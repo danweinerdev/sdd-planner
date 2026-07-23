@@ -24,9 +24,15 @@ This repository keeps spec-driven development artifacts under `{{PLANNING_ROOT}}
 - Artifact metadata lives in YAML frontmatter. Status values are the source of truth.
 - Plans stay under `Plans/<PlanName>/`; never move them to express lifecycle state.
 - A phase owns task status and subtask checkboxes. Update them only after actual verification.
+- Plan each task as one clean, complete, independently bisectable feature
+  commit; subtasks are implementation steps inside that boundary, not presumed
+  incomplete commits.
 - Every task, phase, and plan has a completion-evidence section. Record exact
   commands/tools, context, revision, result, and observable evidence before any
-  `complete` transition; prospective verification criteria are not proof.
+  `complete` transition; prospective verification criteria are not proof. In
+  normal Git execution, commit the verified feature slice first and commit the
+  lifecycle/evidence bookkeeping separately; do not generate dirty snapshot
+  folders merely because bookkeeping is still pending.
 - Use `planning-config.json` to resolve the planning root and any externally targeted repository paths. There is no local companion config.
 - Consult the plugin's frontmatter schema, templates, and language-verification references when creating or changing artifacts.
 

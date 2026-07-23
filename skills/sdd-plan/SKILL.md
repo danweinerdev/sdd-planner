@@ -54,6 +54,20 @@ Use this structured summary as the input to step 3 — every drafting decision s
 - Preserve existing task IDs and ordering. Append new tasks with the next available ID in their phase.
 
 **Both modes:**
+- **Plan tasks are feature-commit boundaries (D-0012).** Break work into
+  vertical or otherwise coherent slices that can each land as one clean,
+  complete, independently bisectable implementation commit. At every task
+  boundary the repository must build, relevant tests must pass, and the commit
+  must deliver an observable behavior or a complete internal capability that
+  later tasks can safely depend on. Do not use a task for an arbitrary layer,
+  file batch, or half-wired scaffold that requires a later task to restore
+  correctness. Conversely, do not combine independently complete feature
+  slices into one task merely because they share a phase.
+- **Subtasks stay inside the boundary.** Subtasks describe the mechanical steps
+  needed to complete the task's feature slice; they are not presumed commit
+  points and must not encourage incomplete intermediate commits. If a proposed
+  task cannot be committed with all named verification passing, split or
+  reorder it before approval.
 - **Every task must have a `verification` field** — a specific answer to "how do we know this work is good and complete?" that names specific behaviors to cover (e.g., "parser handles valid, malformed, and empty input", "endpoint returns 200 with valid payload and 400 with missing fields"). Vague criteria like "works correctly" or test counts are not acceptable — verification means each new or changed behavior has a corresponding check. Wherever the check is commandable, `verification` also names the exact command to run and the expected observable output (e.g., `cargo test auth::` — 14 tests pass, including the new refresh-expiry case), not just prose criteria. Prose-only criteria are acceptable only when no command can observe the behavior. "Works correctly" is never acceptable. In Revise mode, audit existing tasks and add `verification` to any that lack it. Where a task satisfies a spec acceptance criterion or requirement, its `verification` (or body section) cites the `AC-NN`/`FR-NN` id (`shared/frontmatter-schema.md` § Stable Identifiers) — phase-level Acceptance Criteria likewise cite the spec ids they roll up.
 - **Prospective criteria are not retrospective evidence.** Every task section,
   phase document, and plan README carries the completion-evidence section from
@@ -84,6 +98,9 @@ Use this structured summary as the input to step 3 — every drafting decision s
 For each task, write a `## <ID>: Task Title` section that includes:
 - **`### Subtasks`** — a checklist (`- [ ]`) of the concrete implementation steps the implementer will work through. Not "implement X" — the actual steps a person would tick off (e.g., "add migration", "wire the handler", "cover the empty-input case in tests").
 - **`### Notes`** — implementation guidance, edge cases, references to specific design sections, gotchas the researcher surfaced. If a task can't be broken into subtasks because it depends on research the implementer will do, say that explicitly here — don't leave the section blank.
+- In `### Notes`, state the task's **commit boundary**: the complete behavior or
+  capability that will exist, the verification that keeps the commit green,
+  and any files or later concerns explicitly outside that commit. Cite D-0012.
 - **`### Completion Evidence`** — required, initially exactly
   `Pending — not complete.`; `sdd-implement` replaces it with what actually ran
   before changing task status to `complete`.
@@ -100,6 +117,8 @@ Shallow tasks with no subtasks or notes are not acceptable output — they're th
 
 - Render `shared/agent-prompts/plan-reviewer.md` (substitute the plan path and resolved paths) and dispatch it as a collaboration subagent in a fresh context that does not inherit the primary conversation. If collaboration is unavailable, perform the review yourself following that prompt and label it **self-review**.
 - Address any issues raised by the reviewer.
+- Treat a task that cannot land as a clean, complete, bisectable commit as a
+  plan-structure defect, not an implementation detail.
 
 ### 6. Rehearse (optional dry run)
 

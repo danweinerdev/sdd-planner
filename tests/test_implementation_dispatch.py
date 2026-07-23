@@ -48,6 +48,48 @@ class ImplementationDispatchTests(unittest.TestCase):
         self.assertIn("stable runtime-neutral identifier implement_task", decisions)
         self.assertIn("sdd-implement emits implement_task", decisions)
 
+    def test_plan_tasks_are_clean_complete_bisectable_commit_boundaries(self):
+        plan = (ROOT / "skills" / "sdd-plan" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+        implement = (ROOT / "skills" / "sdd-implement" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+        reviewer = (
+            ROOT / "shared" / "agent-prompts" / "plan-reviewer.md"
+        ).read_text(encoding="utf-8").lower()
+        phase_template = (
+            ROOT / "shared" / "templates" / "plan-phase.md"
+        ).read_text(encoding="utf-8").lower()
+
+        for text in (plan, implement, reviewer, phase_template):
+            for required in ("clean", "complete", "bisectable"):
+                self.assertIn(required, text)
+        self.assertIn("feature-commit boundaries", plan)
+        self.assertIn("subtasks stay inside the boundary", plan)
+        self.assertIn("scoped implementation commit", implement)
+        self.assertIn("scoped lifecycle commit", implement)
+        self.assertNotIn("commit only when the user or repository policy", implement)
+
+    def test_normal_git_completion_does_not_generate_evidence_folders(self):
+        contract = (ROOT / "shared" / "completion-evidence.md").read_text(
+            encoding="utf-8"
+        ).lower()
+        implement = (ROOT / "skills" / "sdd-implement" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+        self.assertIn("normal git completion: commit first", contract)
+        self.assertIn("do not create a snapshot manifest", contract)
+        self.assertIn("no governing-intent object", implement)
+        self.assertIn("fallback", contract)
+        self.assertIn("not a reason to postpone", contract)
+
+    def test_decisions_govern_commit_first_task_boundaries(self):
+        decisions = (ROOT / "Decisions" / "decisions.md").read_text(encoding="utf-8")
+        self.assertIn("id: D-0011", decisions)
+        self.assertIn("id: D-0012", decisions)
+        self.assertIn("clean, complete, and independently bisectable", decisions)
+
 
 if __name__ == "__main__":
     unittest.main()

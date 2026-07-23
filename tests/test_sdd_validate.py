@@ -241,6 +241,7 @@ class ValidatorTests(unittest.TestCase):
                 "Ignored inputs",
                 "Directory inputs",
                 "Identity recheck",
+                "Fallback reason",
             ):
                 self.assertIn(f"`{label}`", evidence_template)
             self.assertIn(
@@ -717,6 +718,7 @@ class ValidatorTests(unittest.TestCase):
             - Repository: `{root}`
             - VCS: `git`
             - Revision / base: `{'a' * 40}-dirty`
+            - Fallback reason: `fixture exercises an explicitly selected dirty-Git fallback`
             - Evidence exclusions: `none`
             - Governing intent: `{hashlib.sha256(intent).hexdigest()}` at `evidence/intent.bin`; inputs: {", ".join(input_references)}
             - Ignored inputs: `none with inspection basis`
@@ -735,6 +737,7 @@ class ValidatorTests(unittest.TestCase):
             phase = phase.replace("Pending — not complete.", textwrap.dedent(block).strip())
             write(root, "Plans/Feature/01-Build.md", phase)
             write(root, "Plans/Feature/README.md", plan_document(phase_status="complete"))
+            self.commit_all(root)
             codes = {
                 item.code
                 for item in sdd_validate.Validator(root, root, "historical").run()
@@ -1171,7 +1174,7 @@ class ValidatorTests(unittest.TestCase):
             scoped = sdd_validate.select(validator.run(), "Specs/Feature")
             self.assertTrue(any(item.code in {"SDD160", "SDD162"} for item in scoped))
 
-    def test_clean_git_identity_checks_commit_and_current_worktree(self) -> None:
+    def test_clean_git_identity_checks_immutable_ancestor_commit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_valid_tree(root)
@@ -1203,14 +1206,230 @@ class ValidatorTests(unittest.TestCase):
             validator._discover()
             plan = validator.by_path["Plans/Feature/README.md"]
             validator._verify_clean_git_identity(
-                plan, revision, set(), "Plan Completion Evidence", 1, True
+                plan, revision, "Plan Completion Evidence", 1, True
             )
             self.assertEqual([], validator.out)
             (root / "changed.txt").write_text("changed", encoding="utf-8")
             validator._verify_clean_git_identity(
-                plan, revision, set(), "Plan Completion Evidence", 1, True
+                plan, revision, "Plan Completion Evidence", 1, True
             )
-            self.assertTrue(any("current worktree differs" in item.message for item in validator.out))
+            self.assertEqual([], validator.out)
+
+    def test_clean_git_evidence_uses_commits_without_evidence_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            implementation_revision = self.commit_all(root)
+            block = f"""
+            - Verified: 2026-07-23
+            - Repository: `{root}`
+            - VCS: `git`
+            - Revision / base: `{implementation_revision}`
+            - Identity recheck: `git diff-tree --exit-code {implementation_revision}`, 2026-07-23T12:00:00Z, matched commit tree
+
+            | Command | Working directory | Result | Observable evidence |
+            |---|---|---|---|
+            | `python3 -m unittest` | `{root}` | PASS (`exit 0`) | Named behavior passed. |
+            """
+            phase = phase_document(task_status="complete")
+            phase = phase.replace("- [ ] Implement it.", "- [x] Implement it.")
+            indented_block = textwrap.dedent(block).strip().replace("\n", "\n        ")
+            phase = phase.replace(
+                "Pending — not complete.", indented_block, 1
+            )
+            write(root, "Plans/Feature/01-Build.md", phase)
+            subprocess.run(["git", "add", "Plans/Feature/01-Build.md"], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "-m",
+                    "Record task completion",
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+
+            findings = sdd_validate.Validator(root, root, "current").run()
+            evidence_findings = {
+                item.code for item in findings if "Task 1.1 Completion Evidence" in item.message
+            }
+            self.assertFalse({"SDD071", "SDD072", "SDD074"} & evidence_findings)
+            self.assertFalse((root / "evidence").exists())
+
+            phase_path = root / "Plans" / "Feature" / "01-Build.md"
+            phase_path.write_text(
+                phase_path.read_text(encoding="utf-8").replace(
+                    "Named behavior passed.", "Uncommitted evidence edit."
+                ),
+                encoding="utf-8",
+            )
+            findings = sdd_validate.Validator(root, root, "current").run()
+            self.assertTrue(
+                any("differs from its committed section" in item.message for item in findings)
+            )
+
+    def test_uncommitted_task_completion_transition_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            implementation_revision = self.commit_all(root)
+            block = f"""
+            - Verified: 2026-07-23
+            - Repository: `{root}`
+            - VCS: `git`
+            - Revision / base: `{implementation_revision}`
+            - Identity recheck: `git diff-tree --exit-code {implementation_revision}`, 2026-07-23T12:00:00Z, matched commit tree
+
+            | Command | Working directory | Result | Observable evidence |
+            |---|---|---|---|
+            | `python3 -m unittest` | `{root}` | PASS (`exit 0`) | Named behavior passed. |
+            """
+            indented = textwrap.dedent(block).strip().replace("\n", "\n        ")
+            phase = phase_document(task_status="in-progress").replace(
+                "Pending — not complete.", indented, 1
+            )
+            write(root, "Plans/Feature/01-Build.md", phase)
+            subprocess.run(["git", "add", "Plans/Feature/01-Build.md"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Stage evidence"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            phase_path = root / "Plans" / "Feature" / "01-Build.md"
+            source = phase_path.read_text(encoding="utf-8")
+            source = source.replace("status: in-progress", "status: complete", 1)
+            source = source.replace("- [ ] Implement it.", "- [x] Implement it.")
+            phase_path.write_text(source, encoding="utf-8")
+
+            findings = sdd_validate.Validator(root, root, "current").run()
+            self.assertTrue(
+                any("lifecycle completion is not committed" in item.message for item in findings)
+            )
+
+    def test_clean_git_rejects_every_fallback_only_field(self) -> None:
+        body = """
+        - Verified: 2026-07-23
+        - Repository: `/tmp/repo`
+        - VCS: `git`
+        - Revision / base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+        - Identity recheck: `git`, 2026-07-23T12:00:00Z, matched commit
+        - Ignored inputs: `none with inspection basis`
+
+        | Tool / inspection | Context | Result | Observable evidence |
+        |---|---|---|---|
+        | `inspection` | `repo` | PASS | Clean commit inspected. |
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            validator = sdd_validate.Validator(root, root, "historical")
+            validator._discover()
+            artifact = validator.by_path["Plans/Feature/README.md"]
+            validator._evidence(
+                artifact,
+                "in-progress",
+                "Plan Completion Evidence",
+                1,
+                textwrap.dedent(body),
+            )
+            self.assertTrue(any(item.code == "SDD074" for item in validator.out))
+
+    def test_phase_completion_requires_committed_parent_plan_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            self.commit_all(root)
+            evidence = """
+            - Verified: 2026-07-23
+            - Repository: `/tmp/example`
+            - VCS: `git`
+            - Revision / base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+            - Identity recheck: `git aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, 2026-07-23T12:00:00Z, matched commit
+
+            | Tool / inspection | Context | Result | Observable evidence |
+            |---|---|---|---|
+            | `inspection` | `phase` | PASS | Phase behavior passed. |
+            """
+            indented = textwrap.dedent(evidence).strip().replace("\n", "\n        ")
+            phase = phase_document()
+            phase = phase.replace("status: planned", "status: complete", 1)
+            phase = phase.replace("- [ ] AC-01", "- [x] AC-01")
+            phase = phase.replace("Pending — not complete.", indented, 2)
+            write(root, "Plans/Feature/01-Build.md", phase)
+            subprocess.run(["git", "add", "Plans/Feature/01-Build.md"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Complete phase artifact"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            plan_path = root / "Plans" / "Feature" / "README.md"
+            plan_path.write_text(
+                plan_path.read_text(encoding="utf-8").replace(
+                    "status: planned", "status: complete", 1
+                ),
+                encoding="utf-8",
+            )
+            validator = sdd_validate.Validator(root, root, "current")
+            validator._discover()
+            artifact = validator.by_path["Plans/Feature/01-Build.md"]
+            validator._verify_evidence_committed(
+                artifact,
+                "Phase Completion Evidence",
+                textwrap.dedent(evidence).strip(),
+                1,
+            )
+            self.assertTrue(
+                any("lifecycle completion is not committed" in item.message for item in validator.out)
+            )
+
+    def test_deleted_or_nested_fallback_capture_reports_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            capture = root / "capture.bin"
+            capture.write_bytes(b"capture")
+            self.commit_all(root)
+            capture.unlink()
+            validator = sdd_validate.Validator(root, root, "current")
+            validator._discover()
+            artifact = validator.by_path["Plans/Feature/README.md"]
+            validator._verify_capture_committed(
+                artifact, "capture.bin", "Plan Completion Evidence", 1
+            )
+            self.assertTrue(any("missing from the worktree" in item.message for item in validator.out))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            self.commit_all(root)
+            nested = root / "nested"
+            nested.mkdir()
+            subprocess.run(["git", "init"], cwd=nested, check=True, capture_output=True)
+            (nested / "capture.bin").write_bytes(b"capture")
+            subprocess.run(["git", "add", "capture.bin"], cwd=nested, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "nested capture"],
+                cwd=nested,
+                check=True,
+                capture_output=True,
+            )
+            validator = sdd_validate.Validator(root, root, "current")
+            validator._discover()
+            artifact = validator.by_path["Plans/Feature/README.md"]
+            validator._verify_capture_committed(
+                artifact, "nested/capture.bin", "Plan Completion Evidence", 1
+            )
+            self.assertTrue(
+                any("not in the lifecycle artifact's Git worktree" in item.message for item in validator.out)
+            )
 
     def test_intent_projection_rejects_noncanonical_artifact_payload(self) -> None:
         payload = b"---\ntype: plan\n---\n"

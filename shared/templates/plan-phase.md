@@ -12,7 +12,7 @@ tasks: []
 #   id: "X.Y"
 #   title: "Task title"
 #   status: planned
-#   verification: "How we know this task is good and complete"
+#   verification: "How we know this complete, bisectable feature slice passes"
 #   depends_on: ["X.Z"]  # optional
 ---
 
@@ -33,6 +33,11 @@ tasks: []
 - Every task mapping has one matching H2 beginning `## <task-id>:` (a space in
   place of the colon is also accepted) with exact H3 headings `Subtasks`,
   `Notes`, and `Completion Evidence` inside it.
+- Each task is one clean, complete, independently bisectable implementation-
+  commit boundary (D-0012). Its subtasks are steps inside that boundary; the
+  repository remains buildable and named verification passes when the task
+  lands. `Notes` states the complete behavior/capability delivered at the
+  boundary and excludes unrelated feature slices.
 - FR-NN, NFR-NN, AC-NN, and D-NNNN citations must resolve through the plan's
   `related` graph and applicable decision ledger. For approved/active/complete
   plans, task verification/detail and phase Acceptance Criteria collectively
@@ -54,7 +59,7 @@ Brief description of what this phase delivers.
 - [ ] {{SUBTASK}}
 
 ### Notes
-
+Commit boundary (D-0012): {{COMPLETE_BEHAVIOR_OR_CAPABILITY_THIS_TASK_LANDS}}
 ### Completion Evidence
 
 <!-- Keep the exact pending line until completion. Populated evidence uses the
@@ -71,18 +76,21 @@ Pending — not complete.
 
 ## Phase Completion Evidence
 
-<!-- Keep the exact `Pending — not complete.` line until completion. When any
-task or phase evidence is populated, use the exact labels `Verified`,
-`Repository`, `VCS`, `Revision / base`, `Evidence exclusions`,
-`Governing intent`, `Ignored inputs`, `Directory inputs`, and
-`Identity recheck`, each as `- <label>: <value>`.
+<!-- Keep the exact `Pending — not complete.` line until completion. Normal
+commit-backed Git evidence uses the exact labels `Verified`, `Repository`,
+`VCS`, `Revision / base`, and `Identity recheck`, each as `- <label>: <value>`.
 `Verified` is `YYYY-MM-DD`; `Repository` is the exact resolved target root;
 `VCS` is `git`, `git-worktree`, `perforce`, or `none`; Git `Revision / base` is
-a full 40-hex revision optionally suffixed `-dirty` (`none` for no VCS).
-`Governing intent` uses
-`<64-hex SHA-256> at <durable path>; inputs: <comma-separated artifact paths
-and decision ids>`. Add `Content snapshot` with the same digest/location form
-for dirty Git, Perforce, or no VCS. `Ignored inputs` and `Directory inputs` use
+a full 40-hex tested implementation commit. Commit the feature slice before
+recording evidence, then commit only lifecycle/evidence bookkeeping separately;
+normal Git completion creates no snapshot, projection, content-object, or
+`evidence/` folder. Only fallback dirty Git, Perforce, or no-VCS identity adds
+`Fallback reason`, `Evidence exclusions`, `Governing intent`, `Ignored inputs`,
+`Directory inputs`, and `Content snapshot`; dirty Git uses a full base suffixed
+`-dirty`. `Fallback reason` names the specific VCS or authorization constraint.
+`Governing intent` uses `<64-hex SHA-256> at <durable path>; inputs:
+<comma-separated artifact paths and decision ids>`. `Ignored inputs` and
+`Directory inputs` use
 `none with <inspection basis>` or
 `paths: <comma-separated repository-relative paths>; <digests/basis>`.
 The exact table columns are

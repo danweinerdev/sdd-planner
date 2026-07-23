@@ -27,13 +27,11 @@ Before setting a task to `complete`, replace the pending marker with:
 - Verified: YYYY-MM-DD
 - Repository: `<repository root>`
 - VCS: `git | git-worktree | perforce | none`
-- Revision / base: `<exact clean Git revision>`, `<Git base>-dirty`, `<Perforce have digest>`, or `none`
-- Evidence exclusions: `<exact repository-relative SDD artifact paths, or none>`
-- Governing intent: `<sha256 digest> at <durable projection path>; inputs: <paths and decision ids>`
-- Ignored inputs: `paths: <comma-separated repository-relative paths>; <digests/basis>`, or `none with <inspection basis>`
-- Directory inputs: `paths: <comma-separated repository-relative paths>; <modes/basis>`, or `none with <inspection basis>`
-- Content snapshot: `<sha256 digest> at <durable canonical manifest path>` (required for dirty Git, Perforce, or no VCS)
+- Revision / base: `<exact tested implementation commit>`, `<Git base>-dirty`, `<Perforce have digest>`, or `none`
 - Identity recheck: `<exact command/tool, timestamp, and matching revision/digest>`
+
+<!-- Fallback identity only: add Evidence exclusions, Governing intent,
+Ignored inputs, Directory inputs, and Content snapshot as defined below. -->
 
 | Command | Working directory | Result | Observable evidence |
 |---|---|---|---|
@@ -51,9 +49,10 @@ Rules:
 3. Record the observable result that satisfies the task's prospective
    `verification`; test counts alone are insufficient when named behaviors were
    required.
-4. Record the tested source identity using the canonical procedure below. A
-   changed-path list, ordinary text patch, or revision without the identity
-   recheck is not reproducible evidence.
+4. Record the tested source identity using the canonical procedure below. In a
+   commit-capable Git workflow this is the focused implementation commit, not a
+   dirty base or the later lifecycle commit. A changed-path list, ordinary text
+   patch, or revision without the identity recheck is not reproducible evidence.
 5. Name non-command tools and procedures precisely, including version when it
    affects reproducibility, plus the inspected paths/environment and observed
    result.
@@ -64,15 +63,72 @@ Rules:
    failure output verbatim in the session report or linked durable artifact;
    never rewrite failure as passing evidence.
 
+## Normal Git completion: commit first
+
+For Git repositories where commits are authorized, each plan task is one clean,
+complete, independently bisectable feature slice (D-0011, D-0012):
+
+1. Implement the task and its tests without mixing another feature slice.
+2. Run the required verification and review the exact diff.
+3. Commit the implementation as one scoped feature commit. Subtasks are steps
+   within this boundary; they are not incomplete intermediate commits. The
+   committed tree must contain a complete behavior or coherent internal
+   capability, keep the repository buildable/testable, and be safe for `git
+   bisect` to land on.
+4. Confirm the implementation commit contains the exact tested bytes and record
+   its full revision as `Revision / base`. The commit itself is the durable
+   source identity; do not create a snapshot manifest, content-object directory,
+   governing-intent projection, or `evidence/` folder for this normal path.
+5. Populate completion evidence and lifecycle status, then make a separate
+   scoped lifecycle commit containing only the plan/evidence bookkeeping. This
+   avoids the impossible requirement for a commit to contain its own SHA. The
+   evidence continues to identify the tested implementation commit, not the
+   later lifecycle commit.
+
+The completion transition is finalized only after both scoped commits exist and
+the populated planning artifact is committed. The planning root must therefore
+be a Git worktree for every completion mode, including fallback source identity.
+If it is not, snapshotting may preserve a handoff state but the entity remains
+non-complete until an approved durable lifecycle transport is established. No
+transport may leave completed implementation dirty or replace an authorized
+feature commit with a content snapshot.
+
+## Fallback source identity
+
+Dirty Git, Perforce, and no-VCS snapshots are compatibility mechanisms for
+workspaces where a normal implementation commit is genuinely unavailable or
+not authorized. They are not a reason to postpone an authorized Git commit.
+Record the constraint or authorization that selected the fallback. A routine
+in-progress Git task must stay non-complete rather than generating a snapshot
+merely because evidence has not been written yet.
+
+Fallback evidence adds these fields to the common task evidence:
+
+- Fallback reason: `<specific VCS/authorization constraint selecting snapshot identity>`
+- Evidence exclusions: `<exact repository-relative SDD artifact paths, or none>`
+- Governing intent: `<sha256 digest> at <durable projection path>; inputs: <paths and decision ids>`
+- Ignored inputs: `paths: <comma-separated repository-relative paths>; <digests/basis>`, or `none with <inspection basis>`
+- Directory inputs: `paths: <comma-separated repository-relative paths>; <modes/basis>`, or `none with <inspection basis>`
+- Content snapshot: `<sha256 digest> at <durable canonical manifest path>`
+
 ## Canonical source identity
 
 Source identity covers every target repository touched by the task. Record a
 separate revision/snapshot for each repository. The repository root, detected
-VCS kind, full base identity, and governing-intent digest are part of the
-identity. A Git bare repository is unsupported: operate in a worktree. Do not
+VCS kind, and full implementation revision or fallback snapshot are part of the
+identity; fallback identity also includes its governing-intent digest. A Git
+bare repository is unsupported: operate in a worktree. Do not
 improvise an identity for an unrecognized VCS.
 
-The only permitted content-snapshot exclusions are exact repository-relative
+For normal commit-backed Git evidence, the full tested implementation revision
+and immediate commit/tree identity recheck are sufficient. The planning
+artifact itself must be tracked and committed in its lifecycle commit. Later
+feature commits do not make earlier task evidence stale: the recorded commit is
+immutable retrospective identity, not an assertion that the current branch tip
+still equals that historical task.
+
+The remaining rules in this section apply to fallback snapshots. The only
+permitted content-snapshot exclusions are exact repository-relative
 paths of the governing phase document, plan README, phase debrief, canonical
 snapshot manifest/content objects, and governing-intent projection object when
 those files exist solely to record SDD evidence or lifecycle status. Evidence
@@ -83,7 +139,8 @@ List every exclusion in the evidence. Source, tests, fixtures, generated
 source, configuration, and any other implementation content may not be
 excluded.
 
-Compute `Governing intent` over an explicit input set: the plan README,
+For fallback evidence, compute `Governing intent` over an explicit input set:
+the plan README,
 governing phase document, every governing spec/design consulted or cited by the
 task, and every accepted decision consulted or cited by id. Resolve all
 citations and record the sorted input references in evidence; an unresolved or
@@ -113,14 +170,6 @@ a changed input set or digest invalidates prior verification. For an already-
 closed historical entity, validate the durable projection bytes and digest but
 do not compare them to artifacts legitimately revised by later work; report
 later governing revisions separately as drift when applicable.
-
-For a clean Git identity, the index and worktree content must match the recorded
-full revision after applying only those exclusions, every non-excluded staged
-path must match its worktree bytes/mode, and there must be no non-ignored
-untracked file outside the exclusions.
-Evidence edits may make the repository globally dirty; “clean” means
-implementation content is clean under this rule, not that a bare VCS status
-command prints nothing.
 
 For a dirty identity, store a canonical snapshot manifest and content objects:
 
@@ -153,10 +202,10 @@ For a dirty identity, store a canonical snapshot manifest and content objects:
 4. Store every non-deletion content object at
    `<manifest-path>.contents/<sha256>` with exactly the hashed bytes. SHA-256 of
    the exact manifest bytes is the recorded content-snapshot digest.
-5. A durable path is either a VCS-tracked artifact committed with the SDD
+5. A durable fallback path is either a VCS-tracked artifact committed with the SDD
    evidence or an immutable, content-addressed artifact URI with recorded
    retention. Because the base stays fixed and evidence paths are explicit
-   exclusions, committing only implementation/evidence files does not alter
+   exclusions, committing only fallback evidence files does not alter
    the tested content identity; changing any implementation byte does. A
    mutable temporary file is not durable.
 
@@ -204,7 +253,7 @@ workspace has no VCS. Files or directories outside the target root that affect
 verification must be listed as environment/input artifacts with exact paths,
 content digests, and durable captures.
 
-Capture this identity immediately after the recorded verification commands.
+Capture fallback identity immediately after the recorded verification commands.
 After writing evidence, recompute it with the same base and exclusions
 immediately before each task/phase/plan status transition. Record the exact
 recheck command or tool, timestamp, and matching revision/digest. Before a
@@ -217,9 +266,11 @@ Before setting a phase to `complete`, replace `Pending — not complete.` under
 `## Phase Completion Evidence` with:
 
 - verification date and canonical source identity under the task-evidence
-  rules, including durable snapshot capture when required;
-- the VCS kind, exact exclusions, governing-intent digest, ignored/directory-
-  input inventories, and successful identity recheck;
+  rules, including the tested implementation revision for normal Git or durable
+  snapshot capture when fallback identity is required;
+- the VCS kind and successful identity recheck, plus exact exclusions,
+  governing-intent digest, and ignored/directory-input inventories only for a
+  fallback snapshot;
 - a rollup of every task id that repeats its populated `### Completion
   Evidence` section verbatim under `### Task <id> Evidence Rollup`;
 - exact phase-level commands/tools and results when the phase acceptance
@@ -238,9 +289,11 @@ Before setting a plan to `complete`, replace `Pending — not complete.` under
 `## Plan Completion Evidence` with:
 
 - verification date and canonical source identity under the task-evidence
-  rules, including durable snapshot capture when required;
-- the VCS kind, exact exclusions, governing-intent digest, ignored/directory-
-  input inventories, and successful identity recheck;
+  rules, including the final tested implementation revision for normal Git or
+  durable snapshot capture when fallback identity is required;
+- the VCS kind and successful identity recheck, plus exact exclusions,
+  governing-intent digest, and ignored/directory-input inventories only for a
+  fallback snapshot;
 - a rollup for every phase and task that repeats the exact commands/tools,
   context, results, and observable evidence from their completion sections;
   use one `### Phase <id> Evidence Rollup` and one

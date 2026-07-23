@@ -139,20 +139,33 @@ Apply `shared/completion-evidence.md` literally:
 
 - Every task, phase, and plan has its required evidence section.
 - A complete entity has fully conforming retrospective evidence: verification
-  date; repository root and VCS kind; exact clean revision or canonical content
-  snapshot digest and durable artifact; permitted exact exclusions;
-  governing-intent digest; ignored/directory-input inventories; a successful
-  immediate identity recheck; exact commands/tools; context/working directory; exit
+  date; repository root and VCS kind; exact tested implementation commit for
+  normal Git or canonical content snapshot digest and durable artifact for a
+  genuine fallback; a successful immediate identity recheck; exact
+  commands/tools; context/working directory; exit
   status or result; and specific observable evidence covering prospective
   verification.
+- Normal clean-Git evidence contains no fallback projection, snapshot,
+  content-object, or exclusion fields. The implementation revision exists and
+  is an ancestor of the current branch, and the populated planning evidence is
+  present in a committed lifecycle artifact. Later feature commits do not stale
+  an earlier task's immutable implementation revision.
+- Semantically inspect the recorded implementation commit's diff against the
+  task boundary: the commit must implement that task's complete feature slice,
+  exclude other independently complete slices, and leave the named checks
+  passing. Ancestry alone cannot establish semantic commit scope.
 - Every required final and aggregate check passed. Missing, unrun, vague,
   stale, or failing evidence makes a `complete` status invalid.
 - Phase evidence covers every task and acceptance criterion. Plan evidence
   repeats exact task/phase evidence rollups and covers the plan deliverable;
   links alone do not satisfy the record.
-- Dirty Git snapshot manifests match current changed, nonignored untracked,
+- Fallback dirty Git snapshot manifests match current changed, nonignored untracked,
   explicitly inventoried ignored, and directory inputs byte-for-byte and by
-  mode; staged/index content matches the tested worktree.
+  mode; staged/index content matches the tested worktree. Flag fallback capture
+  used merely to postpone an authorized normal Git feature commit. Fallback
+  evidence names the specific constraint that selected it, and every local
+  manifest, projection, and content object is durably committed with the
+  lifecycle evidence (or uses a validated immutable retained URI).
 - Non-complete entities may be pending or contain populated evidence awaiting
   validation.
 - Historical complete artifacts without conforming evidence are reported as

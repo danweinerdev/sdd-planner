@@ -117,6 +117,28 @@ decisions:
     confirmation: "The decision-log convention and both decision-writing skills invoke the bundled validator, and automated fixtures cover valid and invalid ledger states."
     scope: [shared/decision-log.md, skills/sdd-decide, skills/sdd-decision-log, scripts, tests]
     tags: [decision-log, validation, python, pyyaml, deterministic-checks]
+  - id: D-0011
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "In commit-capable Git workflows, SDD implementation completes each focused task with a scoped implementation commit before recording completion evidence; the evidence records that tested commit, and content snapshots are fallback identity mechanisms rather than substitutes for normal feature commits."
+    rejected: ["Keep completed Git implementation dirty while collecting evidence", "Create dirty-worktree snapshot folders merely because lifecycle evidence has not yet been written", "Mix implementation and later evidence bookkeeping into an untraceable working-tree batch"]
+    rationale: "Commit-first execution preserves reviewable feature history and lets ordinary completion evidence identify an immutable tested revision without copying changed implementation files into an evidence folder. A later scoped lifecycle commit avoids self-referential commit identities."
+    confirmation: "sdd-implement requires the implementation commit before final verification and evidence capture when commits are authorized; completion-evidence documents the implementation-revision plus lifecycle-commit model and reserves snapshots for genuine fallback cases; tests reject the old evidence-first optional-commit wording."
+    scope: [README.md, shared/completion-evidence.md, shared/templates/plan-readme.md, shared/templates/plan-phase.md, skills/sdd-implement, skills/sdd-validate, scripts/sdd_validate.py, tests]
+    tags: [git, commits, workflow, completion, evidence, snapshots]
+  - id: D-0012
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "Implementation plans must break work into task-sized feature slices whose completed implementation commits are clean, complete, and independently bisectable; subtasks are steps within that commit boundary, not separate incomplete commits."
+    rejected: ["Plan tasks around arbitrary file or layer boundaries that leave the repository behaviorally incomplete", "Commit each mechanical subtask independently when it does not form a complete feature slice", "Accumulate multiple complete feature slices into one broad implementation commit"]
+    rationale: "Making plan tasks correspond to complete behavioral slices gives implementation an explicit commit boundary, keeps every completed commit testable, and preserves useful git bisect and revert behavior."
+    confirmation: "sdd-plan defines task boundaries as complete bisectable feature slices, plan review checks each proposed task as an independent commit boundary, sdd-implement commits one such task at a time, and templates expose the rule to generated plans."
+    scope: [README.md, shared/frontmatter-schema.md, shared/agent-prompts/plan-reviewer.md, shared/templates/plan-phase.md, skills/sdd-plan, skills/sdd-implement, tests]
+    tags: [planning, tasks, features, git, commits, bisectability, workflow]
 ---
 
 # Decision Ledger

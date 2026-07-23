@@ -26,6 +26,14 @@ Tasks, phases, and plans carry durable completion-evidence sections recording
 the exact commands, tools, context, revision, and observed results used to
 justify each `complete` transition (D-0005).
 
+Plan tasks are implementation commit boundaries: each task describes one clean,
+complete, independently bisectable feature slice, while subtasks remain steps
+inside that boundary (D-0012). In normal Git execution, `sdd-implement` verifies
+and commits that slice before recording evidence against the immutable feature
+commit, then commits lifecycle bookkeeping separately. Dirty snapshots and
+content-object evidence folders are fallback identity mechanisms, not a reason
+to leave ordinary completed implementation uncommitted (D-0011).
+
 The compact core exposes: `sdd-setup`, `sdd-research`, `sdd-brainstorm`,
 `sdd-specify`, `sdd-design`, `sdd-plan`, `sdd-implement`, `sdd-code-review`,
 `sdd-poke-holes`, `sdd-debrief`, `sdd-decide`, `sdd-decision-log`, and

@@ -48,6 +48,12 @@ Use the tools your runtime provides when they sharpen the review:
 - Are dependencies realistic and correctly ordered?
 - Are there hidden complexities not accounted for?
 - Are the phase boundaries logical?
+- Is every task one clean, complete, independently bisectable feature-commit
+  boundary (D-0012), with the repository buildable and its named verification
+  passing at that boundary?
+- Are subtasks merely steps inside that boundary, rather than incomplete commit
+  points? Flag horizontal half-features and tasks that combine independent
+  feature slices as Major findings.
 
 ### 3. Convention Compliance
 - Does frontmatter follow `shared/frontmatter-schema.md`?
@@ -69,9 +75,8 @@ Also check task `verification` fields: where the check is commandable, verificat
 Prospective `verification` and retrospective completion evidence are distinct.
 Flag a plan that treats its criteria as proof, omits required pending evidence
 sections, or marks an entity complete without the exact commands/tools,
-context, observed results, canonical source identity, permitted exact
-exclusions, durable dirty capture when applicable, and immediate identity
-recheck required by
+context, observed results, the tested implementation commit (normal Git) or
+durable fallback capture when applicable, and immediate identity recheck required by
 `shared/completion-evidence.md`.
 
 ## Output Format

@@ -670,7 +670,7 @@ class Validator:
             return
         if pending:
             return
-        labels = ("Verified", "Repository", "VCS", "Revision / base", "Evidence exclusions", "Governing intent", "Ignored inputs", "Directory inputs", "Identity recheck")
+        labels = ("Verified", "Repository", "VCS", "Revision / base", "Identity recheck")
         for label in labels:
             if not re.search(rf"^\s*-\s+{re.escape(label)}:\s*\S", body, re.MULTILINE):
                 self.error(artifact, "SDD071", f"`{name}` lacks `{label}`.", f"Add populated `{label}` evidence.", line)
@@ -691,23 +691,37 @@ class Validator:
             recorded_repository = Path(repository).expanduser().resolve()
             if recorded_repository != expected_repository:
                 self.error(artifact, "SDD072", f"`{name}` repository `{recorded_repository}` does not match target `{expected_repository}`.", "Record the exact resolved target repository root.", line)
-        exclusions = parse_exclusions(evidence_value(body, "Evidence exclusions"))
-        ignored_inputs, ignored_error = parse_inventory_paths(evidence_value(body, "Ignored inputs"))
-        directory_inputs, directory_error = parse_inventory_paths(evidence_value(body, "Directory inputs"))
-        for label, inventory_error in (("Ignored inputs", ignored_error), ("Directory inputs", directory_error)):
-            if inventory_error:
-                self.error(artifact, "SDD165", f"`{name}` has malformed `{label}`: {inventory_error}", "Use `none with <inspection basis>` or `paths: <comma-separated paths>; <digests/basis>`.", line)
+        fallback = revision.endswith("-dirty") or vcs in {"perforce", "none"}
+        fallback_labels = ("Fallback reason", "Evidence exclusions", "Governing intent", "Ignored inputs", "Directory inputs", "Content snapshot")
+        if fallback:
+            for label in fallback_labels:
+                if not re.search(rf"^\s*-\s+{re.escape(label)}:\s*\S", body, re.MULTILINE):
+                    self.error(artifact, "SDD071", f"`{name}` fallback identity lacks `{label}`.", f"Add populated `{label}` fallback evidence.", line)
+        exclusions = parse_exclusions(evidence_value(body, "Evidence exclusions")) if fallback else set()
+        ignored_inputs: set[str] = set()
+        directory_inputs: set[str] = set()
+        if fallback:
+            ignored_inputs, ignored_error = parse_inventory_paths(evidence_value(body, "Ignored inputs"))
+            directory_inputs, directory_error = parse_inventory_paths(evidence_value(body, "Directory inputs"))
+            for label, inventory_error in (("Ignored inputs", ignored_error), ("Directory inputs", directory_error)):
+                if inventory_error:
+                    self.error(artifact, "SDD165", f"`{name}` has malformed `{label}`: {inventory_error}", "Use `none with <inspection basis>` or `paths: <comma-separated paths>; <digests/basis>`.", line)
         governing = evidence_value(body, "Governing intent")
         snapshot = evidence_value(body, "Content snapshot")
+        if not fallback and any(evidence_value(body, label) for label in fallback_labels):
+            self.error(artifact, "SDD074", f"`{name}` uses fallback capture fields for a clean Git implementation commit.", "Remove snapshot/projection/exclusion fields; the tested commit is the durable source identity.", line)
         capture_paths = [location for value in (governing, snapshot) if value and (location := digest_location(value)) and not urlparse(location).scheme]
-        self._check_exclusions(artifact, exclusions, capture_paths, name, line)
+        if fallback:
+            self._check_exclusions(artifact, exclusions, capture_paths, name, line)
         recorded_inputs = parse_recorded_inputs(governing) if governing else set()
-        required_inputs = self._required_intent_inputs(artifact)
-        if governing and recorded_inputs != required_inputs:
+        required_inputs = self._required_intent_inputs(artifact) if fallback else set()
+        if fallback and governing and recorded_inputs != required_inputs:
             self.error(artifact, "SDD076", f"`{name}` governing inputs {sorted(recorded_inputs)} do not match required inputs {sorted(required_inputs)}.", "Regenerate the projection from the plan, governing phase(s), related specs/designs, and cited accepted decisions.", line)
         if vcs in {"git", "git-worktree"} and revision and not revision.endswith("-dirty"):
             compare_current = self.identity_mode != "historical"
-            self._verify_clean_git_identity(artifact, revision, exclusions, name, line, compare_current)
+            self._verify_clean_git_identity(artifact, revision, name, line, compare_current)
+        if status == "complete":
+            self._verify_evidence_committed(artifact, name, body, line)
         rows = evidence_rows(body)
         if not rows:
             self.error(artifact, "SDD072", f"`{name}` has no conforming command or tool evidence row.", "Add a four-column command or tool row with PASS and specific observable evidence.", line)
@@ -729,7 +743,7 @@ class Validator:
                 capture_kind="intent",
                 expected_inputs=recorded_inputs,
             )
-        if revision.endswith("-dirty") or vcs in {"perforce", "none"}:
+        if fallback:
             if snapshot:
                 self._digest(
                     artifact,
@@ -745,14 +759,19 @@ class Validator:
                 )
             else:
                 self.error(artifact, "SDD074", f"`{name}` requires a content snapshot.", "Record its SHA-256 and durable manifest path.", line)
+            if status == "complete":
+                for capture in capture_paths:
+                    self._verify_capture_committed(artifact, capture, name, line)
         recheck = evidence_value(body, "Identity recheck") or ""
         if recheck and (
             not re.search(r"\bmatch(?:ed|es|ing)?\b", recheck, re.IGNORECASE)
             or not re.search(r"\b\d{4}-\d{2}-\d{2}[T ][0-2]\d:[0-5]\d", recheck)
         ):
             self.error(artifact, "SDD075", f"`{name}` recheck lacks a timestamped matching result.", "Record the exact tool, ISO timestamp, and matching identity.", line)
+        if vcs in {"git", "git-worktree"} and revision and not revision.endswith("-dirty") and revision.lower() not in recheck.lower():
+            self.error(artifact, "SDD075", f"`{name}` recheck does not name implementation revision `{revision}`.", "Record the exact tested commit in the identity-recheck procedure and result.", line)
 
-    def _verify_clean_git_identity(self, artifact: Artifact, revision: str, exclusions: set[str], name: str, line: int, compare_current: bool) -> None:
+    def _verify_clean_git_identity(self, artifact: Artifact, revision: str, name: str, line: int, compare_current: bool) -> None:
         repository = self._repo_for_artifact(artifact)
 
         def git(*args: str) -> subprocess.CompletedProcess[bytes]:
@@ -768,16 +787,134 @@ class Validator:
             return
         if not compare_current:
             return
-        changed: set[str] = set()
-        for args in (("diff", "--name-only", "-z", revision, "--"), ("diff", "--cached", "--name-only", "-z", revision, "--"), ("ls-files", "--others", "--exclude-standard", "-z")):
-            result = git(*args)
-            if result.returncode != 0:
-                self.error(artifact, "SDD072", f"`{name}` current Git identity check failed: {result.stderr.decode(errors='replace').strip()}", "Repair the worktree or rerun validation with the correct repository.", line)
-                return
-            changed.update(item.decode("utf-8", errors="surrogateescape") for item in result.stdout.split(b"\0") if item)
-        unexpected = sorted(changed - exclusions)
-        if unexpected:
-            self.error(artifact, "SDD072", f"`{name}` current worktree differs from `{revision}` at: {', '.join(unexpected)}.", "Re-run verification at the recorded identity or capture a canonical dirty snapshot.", line)
+        ancestor = git("merge-base", "--is-ancestor", revision, "HEAD")
+        if ancestor.returncode != 0:
+            self.error(artifact, "SDD072", f"`{name}` implementation revision `{revision}` is not an ancestor of current HEAD.", "Check out a descendant containing the completed feature or use historical identity mode for an archival audit.", line)
+
+    def _verify_evidence_committed(self, artifact: Artifact, name: str, body: str, line: int) -> None:
+        repository = git_root(artifact.path)
+        if repository is None:
+            self.error(artifact, "SDD072", f"`{name}` is complete but its planning artifact is not in a Git worktree.", "Commit the lifecycle/evidence artifact in its planning repository before finalizing completion.", line)
+            return
+        try:
+            relative = artifact.path.resolve().relative_to(repository).as_posix()
+        except ValueError:
+            self.error(artifact, "SDD072", f"`{name}` planning artifact cannot be resolved inside its Git worktree.", "Commit the lifecycle/evidence artifact before finalizing completion.", line)
+            return
+        tracked = subprocess.run(
+            ["git", "-C", str(repository), "show", f"HEAD:{relative}"],
+            check=False,
+            capture_output=True,
+        )
+        if tracked.returncode != 0:
+            self.error(artifact, "SDD072", f"`{name}` completion evidence is not committed at HEAD.", "Create the separate scoped lifecycle/evidence commit before finalizing completion.", line)
+            return
+        committed_source = tracked.stdout.decode("utf-8", errors="replace")
+        committed_meta = parse_frontmatter_source(committed_source)
+        source_lines = committed_source.splitlines(keepends=True)
+        frontmatter_end = next(
+            (index for index, value in enumerate(source_lines[1:], 1) if value.strip() == "---"),
+            None,
+        )
+        if committed_meta is None or frontmatter_end is None:
+            self.error(artifact, "SDD072", f"`{name}` committed planning artifact is malformed.", "Commit a valid populated lifecycle artifact before finalizing completion.", line)
+            return
+        committed = Artifact(
+            artifact.path,
+            artifact.rel,
+            committed_meta,
+            "".join(source_lines[frontmatter_end + 1 :]),
+            committed_source,
+            frontmatter_end + 2,
+        )
+        committed_body: str | None = None
+        lifecycle_complete = False
+        task_match = re.fullmatch(r"Task\s+(\S+)\s+Completion Evidence", name)
+        if task_match:
+            task_id = task_match.group(1)
+            tasks = committed.meta.get("tasks", [])
+            lifecycle_complete = any(
+                isinstance(task, dict)
+                and str(task.get("id", "")) == task_id
+                and task.get("status") == "complete"
+                for task in tasks
+            ) if isinstance(tasks, list) else False
+            sections = self.sections(committed)
+            heading = next(
+                (value for value in sections if re.match(rf"^{re.escape(task_id)}(?:\s*:|\s|$)", value)),
+                None,
+            )
+            if heading:
+                committed_body = completion_evidence_body(sections[heading][1])
+                subtasks = heading_bodies(sections[heading][1], 3, "Subtasks")
+                lifecycle_complete = lifecycle_complete and bool(subtasks) and not re.search(
+                    r"^-\s*\[\s\]", subtasks[0], re.MULTILINE
+                )
+        elif name == "Phase Completion Evidence":
+            lifecycle_complete = committed.status == "complete"
+            committed_body = next(iter(heading_bodies(committed.body, 2, name)), None)
+            criteria = heading_bodies(committed.body, 2, "Acceptance Criteria")
+            lifecycle_complete = lifecycle_complete and bool(criteria) and not re.search(
+                r"^-\s*\[\s\]", criteria[0], re.MULTILINE
+            )
+            plan_name = self._plan_name(artifact)
+            plan_path = self.root / "Plans" / plan_name / "README.md" if plan_name else None
+            plan_repository = git_root(plan_path) if plan_path else None
+            if plan_path is None or plan_repository != repository:
+                lifecycle_complete = False
+            else:
+                plan_relative = plan_path.resolve().relative_to(plan_repository).as_posix()
+                plan_at_head = subprocess.run(
+                    ["git", "-C", str(plan_repository), "show", f"HEAD:{plan_relative}"],
+                    check=False,
+                    capture_output=True,
+                )
+                plan_meta = parse_frontmatter_source(
+                    plan_at_head.stdout.decode("utf-8", errors="replace")
+                ) if plan_at_head.returncode == 0 else None
+                phases = plan_meta.get("phases", []) if plan_meta else []
+                lifecycle_complete = lifecycle_complete and any(
+                    isinstance(phase, dict)
+                    and str(phase.get("id", "")) == str(artifact.meta.get("phase", ""))
+                    and phase.get("status") == "complete"
+                    for phase in phases
+                ) if isinstance(phases, list) else False
+        elif name == "Plan Completion Evidence":
+            lifecycle_complete = committed.status == "complete"
+            committed_body = next(iter(heading_bodies(committed.body, 2, name)), None)
+        if not lifecycle_complete or committed_body is None:
+            self.error(artifact, "SDD072", f"`{name}` lifecycle completion is not committed at HEAD.", "Commit the complete status, checked criteria/subtasks, and evidence in the scoped lifecycle commit.", line)
+            return
+        if no_comments(body).strip() != no_comments(committed_body).strip():
+            self.error(artifact, "SDD072", f"`{name}` completion evidence differs from its committed section.", "Commit the populated evidence and lifecycle status in a scoped bookkeeping commit.", line)
+
+    def _verify_capture_committed(self, artifact: Artifact, capture: str, name: str, line: int) -> None:
+        target = self._capture_path(artifact, capture)
+        repository = git_root(target)
+        planning_repository = git_root(artifact.path)
+        if repository is None or repository != planning_repository:
+            self.error(artifact, "SDD078", f"`{name}` local fallback capture `{capture}` is not in the lifecycle artifact's Git worktree.", "Commit local fallback objects in the same planning repository as the lifecycle evidence or use a validated immutable artifact URI with retention.", line)
+            return
+        if not target.is_file():
+            self.error(artifact, "SDD078", f"`{name}` local fallback capture `{capture}` is missing from the worktree.", "Restore the exact committed fallback object or correct the evidence path.", line)
+            return
+        paths = [target]
+        contents = Path(f"{target}.contents")
+        if contents.is_dir():
+            paths.extend(item for item in contents.iterdir() if item.is_file())
+        for path in paths:
+            try:
+                relative = path.resolve().relative_to(repository).as_posix()
+            except ValueError:
+                self.error(artifact, "SDD078", f"`{name}` fallback object `{path}` is outside its Git worktree.", "Store and commit fallback objects under the planning root.", line)
+                continue
+            committed = subprocess.run(
+                ["git", "-C", str(repository), "show", f"HEAD:{relative}"],
+                check=False,
+                capture_output=True,
+            )
+            if committed.returncode != 0 or committed.stdout != path.read_bytes():
+                self.error(artifact, "SDD078", f"`{name}` fallback object `{relative}` is not durably committed at HEAD.", "Commit the exact fallback manifest/content object with the lifecycle evidence or use an immutable retained URI.", line)
 
     def _check_exclusions(self, artifact: Artifact, exclusions: set[str], capture_paths: list[str], name: str, line: int) -> None:
         if not exclusions:
