@@ -8,10 +8,12 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, unquote_to_bytes, urlparse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -58,6 +60,7 @@ DEFINITIONS = {
     "NFR": re.compile(r"^\s*-\s+\*\*(NFR-\d{2,})\*\*\s*:", re.MULTILINE),
     "AC": re.compile(r"^\s*-\s+\[[ xX]\]\s+\*\*(AC-\d{2,})\*\*\s*:", re.MULTILINE),
 }
+NON_BLOCKING = re.compile(r"\*\*non-blocking\*\*", re.IGNORECASE)
 REQUIRED_HEADINGS = {
     "research": ("Context", "Findings", "Analysis", "Open Questions"),
     "brainstorm": ("Problem Statement", "Ideas", "Evaluation", "Next Steps"),
@@ -179,11 +182,13 @@ class Validator:
         for artifact in self.artifacts:
             self._common(artifact)
         self._index()
+        self._append_only_repository_history()
         for artifact in self.artifacts:
             self._headings(artifact)
             self._references(artifact)
             self._specific(artifact)
             self._citations(artifact)
+        self._phase_ownership()
         self._graphs()
         self._traceability()
         self._decision_links()
@@ -276,12 +281,18 @@ class Validator:
                     self.error(artifact, "SDD014", f"`{field}` must be a YAML list.", f"Use `{field}: []` when empty.", artifact.line(f"{field}:"))
 
     def sections(self, artifact: Artifact, level: int = 2) -> dict[str, tuple[int, str]]:
-        matches = list(re.finditer(rf"^{'#' * level}\s+(.+?)\s*$", artifact.body, re.MULTILINE))
+        lines = markdown_lines(artifact.body)
+        matches: list[tuple[int, str]] = []
+        pattern = re.compile(rf"^{'#' * level}\s+(.+?)\s*$")
+        for index, (_, visible) in enumerate(lines):
+            match = pattern.match(visible.rstrip("\r\n"))
+            if match:
+                matches.append((index, match.group(1).strip()))
         result: dict[str, tuple[int, str]] = {}
-        for index, match in enumerate(matches):
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(artifact.body)
-            line = artifact.body_line + artifact.body[: match.start()].count("\n")
-            result[match.group(1).strip()] = (line, artifact.body[match.end() : end])
+        for index, (start, heading) in enumerate(matches):
+            end = matches[index + 1][0] if index + 1 < len(matches) else len(lines)
+            line = artifact.body_line + start
+            result[heading] = (line, "".join(raw for raw, _ in lines[start + 1 : end]))
         return result
 
     def _headings(self, artifact: Artifact) -> None:
@@ -349,6 +360,7 @@ class Validator:
                 self.error(artifact, "SDD041", f"Related path `{reference}` does not resolve.", "Point it at an existing artifact directory or Markdown file.", artifact.line(reference))
 
     def _specific(self, artifact: Artifact) -> None:
+        self._open_questions(artifact)
         if artifact.kind == "spec":
             for family in ("FR", "NFR", "AC"):
                 if not self.spec_ids[artifact.rel][family]:
@@ -368,6 +380,136 @@ class Validator:
         for field in fields:
             if artifact.meta.get(field) in (None, ""):
                 self.error(artifact, "SDD051", f"Required `{artifact.kind}` field `{field}` is missing.", f"Add a nonempty `{field}` value.")
+
+    def _open_questions(self, artifact: Artifact) -> None:
+        gated = (
+            artifact.kind in {"spec", "design"} and artifact.status in {"approved", "implemented"}
+        ) or (
+            artifact.kind == "plan" and artifact.status in {"approved", "active", "complete"}
+        )
+        if not gated:
+            return
+        section = self.sections(artifact).get("Open Questions")
+        if not section:
+            return
+        for question in open_question_items(section[1]):
+            markers = list(NON_BLOCKING.finditer(question))
+            marker = markers[0] if len(markers) == 1 else None
+            prompt = question[: marker.start()].strip(" \t:—-") if marker else ""
+            rationale = question[marker.end() :].strip(" \t:—-") if marker else ""
+            if marker is None or not prompt or not rationale:
+                self.error(
+                    artifact,
+                    "SDD153",
+                    "Approved artifact contains a blocking or unexplained open question.",
+                    "Resolve it or mark the bullet `**non-blocking** — <rationale>`.",
+                    section[0],
+                )
+
+    def _append_only_repository_history(self) -> None:
+        repository = git_root(self.root)
+        if repository is None:
+            return
+        try:
+            prefix = self.root.relative_to(repository).as_posix()
+        except ValueError:
+            return
+        roots = [f"{prefix}/{name}" if prefix != "." else name for name in ("Specs", "Plans")]
+        output, error = git_output(repository, "ls-tree", "-r", "--name-only", "-z", "HEAD", "--", *roots)
+        if error or output is None:
+            return
+        for raw_path in output.split(b"\0"):
+            if not raw_path or not raw_path.endswith(b".md"):
+                continue
+            repository_relative = os.fsdecode(raw_path)
+            baseline_bytes, baseline_error = git_output(repository, "show", f"HEAD:{repository_relative}")
+            if baseline_error or baseline_bytes is None:
+                continue
+            try:
+                baseline = baseline_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            meta = parse_frontmatter_source(baseline)
+            kind = meta.get("type") if meta else None
+            if kind not in {"spec", "plan", "phase"}:
+                continue
+            current_path = repository / repository_relative
+            try:
+                artifact_relative = current_path.relative_to(self.root).as_posix()
+            except ValueError:
+                artifact_relative = repository_relative
+            worktree = read_utf8(current_path)
+            index_bytes, index_error = git_output(repository, "show", f":{repository_relative}")
+            index = None
+            if not index_error and index_bytes is not None:
+                try:
+                    index = index_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    index = None
+            for source_name, current in (("worktree", worktree), ("index", index)):
+                self._check_retained_ids(kind, baseline, current, artifact_relative, source_name)
+
+    def _check_retained_ids(self, kind: str, baseline: str, current: str | None, path: str, source_name: str) -> None:
+        current_meta = parse_frontmatter_source(current or "")
+        if not current_meta or current_meta.get("type") != kind:
+            self.error(
+                None,
+                "SDD164",
+                f"Previously tracked `{kind}` artifact changed type or disappeared from the {source_name}.",
+                f"Restore the artifact as `type: {kind}` at its tracked path before moving or superseding it.",
+                path=path,
+            )
+        if kind == "spec":
+            prior = spec_definition_ids(baseline)
+            retained = spec_retained_ids(current or "")
+            code = "SDD154"
+            noun = "spec"
+            correction = "Restore the id and mark it retired with `removed — see <reason/citation>` or a struck-through definition."
+        elif kind == "plan":
+            prior = frontmatter_entry_ids(baseline, "phases")
+            retained = frontmatter_entry_ids(current or "", "phases")
+            code = "SDD155"
+            noun = "phase"
+            correction = "Restore the append-only phase id and preserve its historical entry."
+        else:
+            prior = frontmatter_entry_ids(baseline, "tasks")
+            retained = frontmatter_entry_ids(current or "", "tasks")
+            code = "SDD156"
+            noun = "task"
+            correction = "Restore the append-only task id and preserve its historical entry."
+        for identifier in sorted(prior - retained):
+            self.error(
+                None,
+                code,
+                f"Previously tracked {noun} id `{identifier}` was removed from the {source_name}.",
+                correction,
+                path=path,
+            )
+
+    def _phase_ownership(self) -> None:
+        owners: dict[str, list[str]] = {}
+        for plan in (item for item in self.artifacts if item.kind == "plan"):
+            plan_name = Path(plan.rel).parent.name
+            phases = plan.meta.get("phases", [])
+            if not isinstance(phases, list):
+                continue
+            for phase in phases:
+                if not isinstance(phase, dict) or not isinstance(phase.get("doc"), str):
+                    continue
+                target = (Path(plan.rel).parent / phase["doc"]).as_posix()
+                owners.setdefault(target, []).append(plan_name)
+        for phase in (item for item in self.artifacts if item.kind == "phase"):
+            parts = Path(phase.rel).parts
+            physical_plan = parts[1] if len(parts) >= 3 and parts[0] == "Plans" else ""
+            declared_plan = str(phase.meta.get("plan", ""))
+            listed = owners.get(phase.rel, [])
+            if len(listed) != 1 or listed[0] != physical_plan or declared_plan != physical_plan:
+                self.error(
+                    phase,
+                    "SDD163",
+                    f"Phase ownership is inconsistent: path plan `{physical_plan}`, declared plan `{declared_plan}`, listed by {listed}.",
+                    "Place the phase under its owning plan, set the matching `plan` field, and list it exactly once in that plan README.",
+                )
 
     def _plan(self, artifact: Artifact) -> None:
         phases = artifact.meta.get("phases")
@@ -391,6 +533,13 @@ class Validator:
             if target is None:
                 self.error(artifact, "SDD056", f"Phase `{phase_id}` doc `{doc}` does not resolve.", "Point `doc` at an existing phase file.")
             else:
+                plan_name = Path(artifact.rel).parent.name
+                if target.kind != "phase":
+                    self.error(artifact, "SDD150", f"Phase `{phase_id}` doc `{doc}` has type `{target.kind}`.", "Point `doc` at a `type: phase` artifact.")
+                if str(target.meta.get("plan", "")) != plan_name:
+                    self.error(artifact, "SDD151", f"Phase `{phase_id}` doc `{doc}` belongs to plan `{target.meta.get('plan')}`.", f"Set its `plan` field to `{plan_name}`.")
+                if target.meta.get("title") != phase.get("title"):
+                    self.error(artifact, "SDD152", f"Phase `{phase_id}` title disagrees with `{doc}`.", "Make the phase entry and document titles identical.")
                 if str(target.meta.get("phase", "")) != phase_id:
                     self.error(artifact, "SDD057", f"Phase `{phase_id}` disagrees with `{doc}` id `{target.meta.get('phase')}`.", "Make both ids identical.")
                 if target.status != phase.get("status"):
@@ -399,6 +548,8 @@ class Validator:
                     self.error(artifact, "SDD059", f"Complete plan contains incomplete phase `{phase_id}`.", "Complete every phase first.")
         for value in duplicates(ids):
             self.error(artifact, "SDD060", f"Duplicate phase id `{value}`.", "Assign a unique append-only phase id.")
+        if artifact.status == "complete":
+            self._plan_rollup(artifact, phases)
 
     def _phase(self, artifact: Artifact) -> None:
         self._required(artifact, ("plan", "phase", "deliverable"))
@@ -408,6 +559,7 @@ class Validator:
             return
         sections = self.sections(artifact)
         phase_id = str(artifact.meta.get("phase", ""))
+        task_evidence: dict[str, str] = {}
         for task in tasks:
             if not isinstance(task, dict):
                 self.error(artifact, "SDD062", "A task entry is not a mapping.", "Add id, title, status, and verification fields.")
@@ -428,17 +580,79 @@ class Validator:
             for required in ("Subtasks", "Notes", "Completion Evidence"):
                 if not re.search(rf"^###\s+{re.escape(required)}\s*$", body, re.MULTILINE):
                     self.error(artifact, "SDD067", f"Task `{task_id}` is missing `### {required}`.", f"Add it inside the task section.", line)
-            evidence = re.search(r"^###\s+Completion Evidence\s*$", body, re.MULTILINE)
-            if evidence:
-                remainder = body[evidence.end() :]
-                following = re.search(r"^###\s+", remainder, re.MULTILINE)
-                value = remainder[: following.start()] if following else remainder
-                self._evidence(artifact, str(task.get("status", "")), f"Task {task_id} Completion Evidence", line + body[: evidence.start()].count("\n") + 1, value)
+            evidence_blocks = heading_bodies(body, 3, "Completion Evidence")
+            if len(evidence_blocks) > 1:
+                self.error(artifact, "SDD067", f"Task `{task_id}` has duplicate visible `### Completion Evidence` sections.", "Keep exactly one Completion Evidence section inside the task.", line)
+            if len(evidence_blocks) == 1:
+                value = evidence_blocks[0]
+                task_evidence[task_id] = no_comments(value).strip()
+                self._evidence(artifact, str(task.get("status", "")), f"Task {task_id} Completion Evidence", line, value)
             if artifact.status == "complete" and task.get("status") != "complete":
                 self.error(artifact, "SDD068", f"Complete phase contains incomplete task `{task_id}`.", "Complete every task first.")
         criteria = sections.get("Acceptance Criteria")
         if artifact.status == "complete" and criteria and re.search(r"^-\s*\[\s\]", criteria[1], re.MULTILINE):
             self.error(artifact, "SDD069", "Complete phase has unchecked acceptance criteria.", "Verify and check every criterion.", criteria[0])
+        if artifact.status == "complete":
+            phase_evidence = sections.get("Phase Completion Evidence")
+            if phase_evidence:
+                rollup = phase_evidence[1]
+                for task in tasks:
+                    if not isinstance(task, dict) or task.get("status") != "complete":
+                        continue
+                    task_id = str(task.get("id", ""))
+                    evidence = task_evidence.get(task_id, "").strip()
+                    copied = rollup_bodies(rollup, f"Task {task_id} Evidence Rollup")
+                    if not evidence or len(copied) != 1 or copied[0].strip() != evidence:
+                        self.error(
+                            artifact,
+                            "SDD157",
+                            f"Phase completion evidence does not contain the verbatim evidence rollup for task `{task_id}`.",
+                            f"Add `### Task {task_id} Evidence Rollup` and repeat its populated Completion Evidence body verbatim.",
+                            phase_evidence[0],
+                        )
+
+    def _plan_rollup(self, artifact: Artifact, phases: list[Any]) -> None:
+        plan_evidence = self.sections(artifact).get("Plan Completion Evidence")
+        if not plan_evidence:
+            return
+        rollup = plan_evidence[1]
+        for phase in phases:
+            if not isinstance(phase, dict) or not isinstance(phase.get("doc"), str):
+                continue
+            phase_id = str(phase.get("id", ""))
+            target = self.by_path.get((Path(artifact.rel).parent / phase["doc"]).as_posix())
+            if not target:
+                continue
+            missing: list[str] = []
+            sections = self.sections(target)
+            phase_body = sections.get("Phase Completion Evidence", (1, ""))[1]
+            phase_rollups = rollup_bodies(rollup, f"Phase {phase_id} Evidence Rollup")
+            if len(phase_rollups) != 1:
+                missing.append(f"phase {phase_id} rollup")
+            elif evidence_rows(phase_rollups[0]) != evidence_rows(phase_body):
+                missing.append(f"phase {phase_id} evidence rows")
+            tasks = target.meta.get("tasks", [])
+            if isinstance(tasks, list):
+                for task in tasks:
+                    if not isinstance(task, dict):
+                        continue
+                    task_id = str(task.get("id", ""))
+                    heading = next((name for name in sections if re.match(rf"^{re.escape(task_id)}(?:\s*:|\s|$)", name)), None)
+                    task_body = sections[heading][1] if heading else ""
+                    evidence = completion_evidence_body(task_body)
+                    task_rollups = rollup_bodies(rollup, f"Task {task_id} Evidence Rollup")
+                    if len(task_rollups) != 1:
+                        missing.append(f"task {task_id} rollup")
+                    elif evidence_rows(task_rollups[0]) != evidence_rows(evidence or ""):
+                        missing.append(f"task {task_id} evidence rows")
+            if missing:
+                self.error(
+                    artifact,
+                    "SDD158",
+                    f"Plan completion evidence omits {', '.join(sorted(set(missing)))}.",
+                    "Add labeled phase/task Evidence Rollup blocks and repeat each child's exact command/tool evidence rows.",
+                    plan_evidence[0],
+                )
 
     def _evidence(self, artifact: Artifact, status: str, name: str, line: int, body: str) -> None:
         pending = PENDING in body
@@ -469,6 +683,11 @@ class Validator:
             if recorded_repository != expected_repository:
                 self.error(artifact, "SDD072", f"`{name}` repository `{recorded_repository}` does not match target `{expected_repository}`.", "Record the exact resolved target repository root.", line)
         exclusions = parse_exclusions(evidence_value(body, "Evidence exclusions"))
+        ignored_inputs, ignored_error = parse_inventory_paths(evidence_value(body, "Ignored inputs"))
+        directory_inputs, directory_error = parse_inventory_paths(evidence_value(body, "Directory inputs"))
+        for label, inventory_error in (("Ignored inputs", ignored_error), ("Directory inputs", directory_error)):
+            if inventory_error:
+                self.error(artifact, "SDD165", f"`{name}` has malformed `{label}`: {inventory_error}", "Use `none with <inspection basis>` or `paths: <comma-separated paths>; <digests/basis>`.", line)
         governing = evidence_value(body, "Governing intent")
         snapshot = evidence_value(body, "Content snapshot")
         capture_paths = [location for value in (governing, snapshot) if value and (location := digest_location(value)) and not urlparse(location).scheme]
@@ -512,6 +731,8 @@ class Validator:
                     expected_vcs=vcs,
                     expected_revision=revision,
                     expected_exclusions=exclusions,
+                    expected_ignored=ignored_inputs,
+                    expected_directories=directory_inputs,
                 )
             else:
                 self.error(artifact, "SDD074", f"`{name}` requires a content snapshot.", "Record its SHA-256 and durable manifest path.", line)
@@ -625,6 +846,8 @@ class Validator:
         expected_vcs: str = "",
         expected_revision: str = "",
         expected_exclusions: set[str] | None = None,
+        expected_ignored: set[str] | None = None,
+        expected_directories: set[str] | None = None,
     ) -> None:
         digest = SHA256.search(value)
         relative = digest_location(value)
@@ -666,6 +889,27 @@ class Validator:
         elif capture_kind == "snapshot":
             for error in validate_snapshot(target, content, expected_vcs, expected_revision, expected_exclusions or set()):
                 self.error(artifact, "SDD079", f"Snapshot `{relative}` is malformed: {error}", "Regenerate the canonical snapshot manifest and content objects.", line)
+            if (
+                self.identity_mode != "historical"
+                and expected_vcs in {"git", "git-worktree"}
+                and expected_revision.endswith("-dirty")
+            ):
+                for error in compare_dirty_git_snapshot(
+                    target,
+                    content,
+                    self._repo_for_artifact(artifact),
+                    expected_revision.removesuffix("-dirty"),
+                    expected_exclusions or set(),
+                    expected_ignored or set(),
+                    expected_directories or set(),
+                ):
+                    self.error(
+                        artifact,
+                        "SDD159",
+                        f"Snapshot `{relative}` does not match the current Git worktree: {error}",
+                        "Regenerate the canonical dirty snapshot after final verification.",
+                        line,
+                    )
 
     def _current_projection(self, governing: Artifact, kind: str, reference: str) -> bytes | None:
         if kind == "artifact":
@@ -1079,6 +1323,426 @@ class Validator:
         return False
 
 
+def open_question_items(body: str) -> list[str]:
+    value = visible_markdown(body).strip()
+    if not value or value.lower().rstrip(".") in {"none", "n/a"}:
+        return []
+    items: list[str] = []
+    current: str | None = None
+    for line in value.splitlines():
+        match = re.match(r"^\s*-\s*(.*?)\s*$", line)
+        if match:
+            if current is not None:
+                items.append(current)
+            current = match.group(1)
+            continue
+        continuation = line.strip()
+        if not continuation:
+            continue
+        if current is None:
+            items.append(continuation)
+        else:
+            current = f"{current} {continuation}".strip()
+    if current is not None:
+        items.append(current)
+    return [item for item in items if item.lower().rstrip(".") not in {"none", "n/a"}]
+
+
+def read_utf8(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def parse_frontmatter_source(source: str) -> dict[str, Any] | None:
+    lines = source.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return None
+    end = next((index for index, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+    if end is None:
+        return None
+    try:
+        value = yaml.safe_load("".join(lines[1:end]))
+    except yaml.YAMLError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def spec_definition_ids(source: str) -> set[str]:
+    body = visible_markdown(source)
+    return set().union(*(set(pattern.findall(body)) for pattern in DEFINITIONS.values()))
+
+
+def spec_retained_ids(source: str) -> set[str]:
+    result = spec_definition_ids(source)
+    identifier = r"((?:FR|NFR|AC)-\d{2,})"
+    removed = re.compile(
+        rf"^\s*-\s+(?:\[[ xX]\]\s+)?\*\*{identifier}\*\*\s*:\s*removed\s+[—-]\s+see\s+\S.*$",
+        re.IGNORECASE,
+    )
+    struck = re.compile(
+        rf"^\s*-\s+(?:\[[ xX]\]\s+)?~~\*\*{identifier}\*\*\s*:\s*\S.*~~\s*$"
+    )
+    for line in visible_markdown(source).splitlines():
+        match = removed.match(line) or struck.match(line)
+        if match:
+            result.add(match.group(1))
+    return result
+
+
+def frontmatter_entry_ids(source: str, field: str) -> set[str]:
+    meta = parse_frontmatter_source(source)
+    entries = meta.get(field) if meta else None
+    if not isinstance(entries, list):
+        return set()
+    return {
+        str(entry["id"])
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("id") not in (None, "")
+    }
+
+
+def completion_evidence_body(task_body: str) -> str | None:
+    bodies = heading_bodies(task_body, 3, "Completion Evidence")
+    return bodies[0] if len(bodies) == 1 else None
+
+
+def markdown_lines(body: str) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    fence: tuple[str, int] | None = None
+    in_comment = False
+    for raw in body.splitlines(keepends=True):
+        visible_parts: list[str] = []
+        remaining = raw
+        while remaining:
+            if in_comment:
+                closing = remaining.find("-->")
+                if closing < 0:
+                    remaining = ""
+                    break
+                in_comment = False
+                remaining = remaining[closing + 3 :]
+                continue
+            opening = remaining.find("<!--")
+            if opening < 0:
+                visible_parts.append(remaining)
+                break
+            visible_parts.append(remaining[:opening])
+            remaining = remaining[opening + 4 :]
+            in_comment = True
+        visible_text = "".join(visible_parts)
+        if raw.endswith("\n") and not visible_text.endswith("\n"):
+            visible_text += "\n"
+        stripped = visible_text.lstrip(" ")
+        indent = len(visible_text) - len(stripped)
+        if fence is not None:
+            marker, length = fence
+            if indent <= 3 and re.match(rf"^{re.escape(marker)}{{{length},}}\s*$", stripped.rstrip("\r\n")):
+                fence = None
+            result.append((raw, "\n" if raw.endswith("\n") else ""))
+            continue
+        opener = re.match(r"^(`{3,}|~{3,})", stripped) if indent <= 3 else None
+        if opener:
+            token = opener.group(1)
+            fence = (token[0], len(token))
+            result.append((raw, "\n" if raw.endswith("\n") else ""))
+            continue
+        result.append((raw, visible_text))
+    return result
+
+
+def visible_markdown(body: str) -> str:
+    return "".join(visible for _, visible in markdown_lines(body))
+
+
+def heading_bodies(body: str, level: int, label: str) -> list[str]:
+    lines = markdown_lines(body)
+    marker = re.compile(rf"^{'#' * level}\s+{re.escape(label)}\s*$")
+    starts = [index for index, (_, visible) in enumerate(lines) if marker.match(visible.rstrip("\r\n"))]
+    result: list[str] = []
+    for start in starts:
+        end = len(lines)
+        for index in range(start + 1, len(lines)):
+            _, visible = lines[index]
+            if re.match(rf"^#{{1,{level}}}\s+", visible):
+                end = index
+                break
+        result.append(no_comments("".join(raw for raw, _ in lines[start + 1 : end])).strip())
+    return result
+
+
+def rollup_bodies(body: str, label: str) -> list[str]:
+    lines = markdown_lines(body)
+    marker = re.compile(rf"^###\s+{re.escape(label)}\s*$")
+    starts = [index for index, (_, visible) in enumerate(lines) if marker.match(visible.rstrip("\r\n"))]
+    result: list[str] = []
+    for start in starts:
+        end = len(lines)
+        for index in range(start + 1, len(lines)):
+            _, visible = lines[index]
+            if re.match(r"^#{1,3}\s+", visible):
+                end = index
+                break
+        result.append(no_comments("".join(raw for raw, _ in lines[start + 1 : end])).strip())
+    return result
+
+
+def encode_path_bytes(value: bytes) -> str:
+    safe = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-/"
+    return "".join(chr(byte) if byte in safe else f"%{byte:02X}" for byte in value)
+
+
+def git_output(repository: Path, *args: str) -> tuple[bytes | None, str | None]:
+    result = subprocess.run(
+        ["git", "-C", str(repository), *args],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None, result.stderr.decode("utf-8", errors="replace").strip()
+    return result.stdout, None
+
+
+def worktree_snapshot_entry(repository: Path, relative: bytes, base: str) -> tuple[tuple[str, str, int, str] | None, str | None]:
+    value = os.fsdecode(relative)
+    target = repository / value
+    tree, error = git_output(repository, "ls-tree", "-z", base, "--", value)
+    if error:
+        return None, error
+    base_mode = tree.split(b" ", 1)[0].decode("ascii") if tree else ""
+    if base_mode == "160000":
+        return None, f"changed Gitlink `{value}` requires a separate nested-repository snapshot"
+    try:
+        info = target.lstat()
+    except FileNotFoundError:
+        return ("D", "000000", 0, "-"), None
+    mode = f"{stat.S_IMODE(info.st_mode) | stat.S_IFMT(info.st_mode):06o}"
+    if stat.S_ISREG(info.st_mode):
+        content = target.read_bytes()
+        current_type = "file"
+    elif stat.S_ISLNK(info.st_mode):
+        content = os.fsencode(os.readlink(target))
+        current_type = "symlink"
+    else:
+        return None, f"changed path `{value}` has unsupported file type"
+    base_type = "symlink" if base_mode == "120000" else "file" if base_mode.startswith("100") else ""
+    state = "A" if not base_mode else "T" if base_type != current_type else "M"
+    return (state, mode, len(content), hashlib.sha256(content).hexdigest()), None
+
+
+def compare_dirty_git_snapshot(
+    path: Path,
+    content: bytes,
+    repository: Path,
+    base: str,
+    exclusions: set[str],
+    ignored_inputs: set[str] | None = None,
+    directory_inputs: set[str] | None = None,
+) -> list[str]:
+    try:
+        text = content.decode("ascii")
+    except UnicodeDecodeError:
+        return []
+    lines = text.splitlines()
+    if not lines or lines[0] != "sdd-dirty-snapshot-v1":
+        return []
+    manifest: dict[str, tuple[str, str, int, str]] = {}
+    directories: dict[str, str] = {}
+    for line in lines[2:]:
+        fields = line.split("\t")
+        if fields[0] == "entry" and len(fields) == 6:
+            try:
+                manifest[fields[5]] = (fields[1], fields[2], int(fields[3]), fields[4])
+            except ValueError:
+                return []
+        elif fields[0] == "directory" and len(fields) == 3:
+            directories[fields[2]] = fields[1]
+
+    errors: list[str] = []
+    commit, error = git_output(repository, "cat-file", "-e", f"{base}^{{commit}}")
+    if error or commit is None:
+        return [f"base revision `{base}` is unavailable"]
+    unmerged, error = git_output(repository, "ls-files", "-u", "-z")
+    if error:
+        return [f"cannot inspect index: {error}"]
+    if unmerged:
+        errors.append("index contains unmerged entries")
+
+    changed, error = git_output(repository, "diff", "--name-only", "--no-renames", "-z", base, "--")
+    if error:
+        return [f"cannot compare base to worktree: {error}"]
+    untracked, error = git_output(repository, "ls-files", "--others", "--exclude-standard", "-z")
+    if error:
+        return [f"cannot enumerate untracked files: {error}"]
+    paths = {item for value in (changed or b"", untracked or b"") for item in value.split(b"\0") if item}
+    expected_directories = set(directory_inputs or set())
+    ignored_directory_roots: set[str] = set()
+    for ignored in ignored_inputs or set():
+        if not valid_decoded_path(os.fsencode(ignored)):
+            errors.append(f"ignored input path `{ignored}` is not canonical and repository-relative")
+            continue
+        ignored_check, ignored_error = git_output(repository, "check-ignore", "-q", "--", ignored)
+        if ignored_error or ignored_check is None:
+            errors.append(f"recorded ignored input `{ignored}` is not ignored by Git")
+            continue
+        target = repository / ignored
+        try:
+            info = target.lstat()
+        except FileNotFoundError:
+            errors.append(f"recorded ignored input `{ignored}` does not exist")
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            expected_directories.add(ignored)
+            ignored_directory_roots.add(ignored)
+        else:
+            paths.add(os.fsencode(ignored))
+    directory_roots = set(expected_directories)
+    for declared in directory_roots:
+        target = repository / declared
+        try:
+            info = target.lstat()
+        except FileNotFoundError:
+            errors.append(f"recorded directory input `{declared}` does not exist")
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            errors.append(f"recorded directory input `{declared}` is not a directory")
+            continue
+        for current_root, dirnames, filenames in os.walk(target, followlinks=False):
+            current_path = Path(current_root)
+            current_relative = current_path.relative_to(repository).as_posix()
+            expected_directories.add(current_relative)
+            for dirname in list(dirnames):
+                child = current_path / dirname
+                if child.is_symlink():
+                    dirnames.remove(dirname)
+                    if any(current_relative == root or current_relative.startswith(root + "/") for root in ignored_directory_roots):
+                        paths.add(os.fsencode(child.relative_to(repository).as_posix()))
+            if any(current_relative == root or current_relative.startswith(root + "/") for root in ignored_directory_roots):
+                for filename in filenames:
+                    paths.add(os.fsencode((current_path / filename).relative_to(repository).as_posix()))
+    tree, tree_error = git_output(repository, "ls-tree", "-rz", "--full-tree", base)
+    if tree_error:
+        errors.append(f"cannot enumerate base tree modes: {tree_error}")
+    else:
+        for record in (tree or b"").split(b"\0"):
+            if not record or b"\t" not in record:
+                continue
+            header, relative = record.split(b"\t", 1)
+            mode = header.split(b" ", 1)[0]
+            if not mode.startswith(b"100"):
+                continue
+            decoded = os.fsdecode(relative)
+            if decoded in exclusions:
+                continue
+            try:
+                current = (repository / decoded).lstat()
+            except FileNotFoundError:
+                continue
+            actual_mode = f"{stat.S_IMODE(current.st_mode) | stat.S_IFMT(current.st_mode):06o}".encode()
+            if actual_mode != mode:
+                paths.add(relative)
+    expected: dict[str, tuple[str, str, int, str]] = {}
+    for relative in paths:
+        decoded = os.fsdecode(relative)
+        if decoded in exclusions:
+            continue
+        encoded = encode_path_bytes(relative)
+        entry, entry_error = worktree_snapshot_entry(repository, relative, base)
+        if entry_error:
+            errors.append(entry_error)
+        elif entry:
+            expected[encoded] = entry
+
+    missing = sorted(set(expected) - set(manifest))
+    extra = sorted(set(manifest) - set(expected))
+    if missing:
+        errors.append(f"manifest omits changed paths: {', '.join(missing)}")
+    if extra:
+        errors.append(f"manifest contains unchanged or excluded paths: {', '.join(extra)}")
+    for encoded in sorted(set(expected) & set(manifest)):
+        if expected[encoded] != manifest[encoded]:
+            errors.append(f"manifest metadata for `{encoded}` is {manifest[encoded]}, expected {expected[encoded]}")
+
+    staged, error = git_output(repository, "diff", "--cached", "--name-only", "-z", base, "--")
+    if error:
+        errors.append(f"cannot inspect staged paths: {error}")
+        staged = b""
+    staged_paths = {item for item in (staged or b"").split(b"\0") if item}
+    index_output, error = git_output(repository, "ls-files", "-s", "-z", "--")
+    if error:
+        errors.append(f"cannot inspect index entries: {error}")
+        index_output = b""
+    index: dict[bytes, tuple[str, str]] = {}
+    for record in (index_output or b"").split(b"\0"):
+        if not record or b"\t" not in record:
+            continue
+        header, relative = record.split(b"\t", 1)
+        fields = header.decode("ascii", errors="replace").split()
+        if len(fields) == 3 and fields[2] == "0":
+            index[relative] = (fields[0], fields[1])
+    for relative in sorted(staged_paths):
+        decoded = os.fsdecode(relative)
+        if decoded in exclusions:
+            continue
+        indexed = index.get(relative)
+        target = repository / decoded
+        try:
+            info = target.lstat()
+        except FileNotFoundError:
+            info = None
+        if indexed is None:
+            if info is not None:
+                errors.append(f"staged path `{encode_path_bytes(relative)}` is absent from the index but present in the worktree")
+            continue
+        if info is None:
+            errors.append(f"staged path `{encode_path_bytes(relative)}` is present in the index but absent from the worktree")
+            continue
+        if stat.S_ISREG(info.st_mode):
+            worktree_mode = "100755" if info.st_mode & 0o111 else "100644"
+            worktree_content = target.read_bytes()
+        elif stat.S_ISLNK(info.st_mode):
+            worktree_mode = "120000"
+            worktree_content = os.fsencode(os.readlink(target))
+        else:
+            errors.append(f"staged path `{encode_path_bytes(relative)}` has unsupported worktree type")
+            continue
+        blob, blob_error = git_output(repository, "cat-file", "blob", indexed[1])
+        if blob_error or blob is None:
+            errors.append(f"cannot read index blob for `{encode_path_bytes(relative)}`")
+            continue
+        if indexed[0] != worktree_mode or blob != worktree_content:
+            errors.append(f"staged path `{encode_path_bytes(relative)}` differs from worktree bytes or mode")
+
+    expected_encoded_directories = {encode_path_bytes(os.fsencode(value)) for value in expected_directories}
+    missing_directories = sorted(expected_encoded_directories - set(directories))
+    extra_directories = sorted(set(directories) - expected_encoded_directories)
+    if missing_directories:
+        errors.append(f"manifest omits declared directories: {', '.join(missing_directories)}")
+    if extra_directories:
+        errors.append(f"manifest contains undeclared directories: {', '.join(extra_directories)}")
+    for encoded, recorded_mode in directories.items():
+        decoded = unquote_to_bytes(encoded)
+        if not valid_decoded_path(decoded):
+            errors.append(f"recorded directory `{encoded}` is not repository-relative")
+            continue
+        target = repository / os.fsdecode(decoded)
+        try:
+            target.resolve().relative_to(repository.resolve())
+        except ValueError:
+            errors.append(f"recorded directory `{encoded}` resolves outside the repository")
+            continue
+        try:
+            info = target.lstat()
+        except FileNotFoundError:
+            errors.append(f"recorded directory `{encoded}` does not exist")
+            continue
+        actual_mode = f"{stat.S_IMODE(info.st_mode) | stat.S_IFMT(info.st_mode):06o}"
+        if not stat.S_ISDIR(info.st_mode) or actual_mode != recorded_mode:
+            errors.append(f"recorded directory `{encoded}` mode is `{recorded_mode}`, expected `{actual_mode}`")
+    return errors
+
+
 def evidence_value(body: str, label: str) -> str | None:
     match = re.search(rf"^\s*-\s+{re.escape(label)}:\s*(.+?)\s*$", body, re.MULTILINE)
     return match.group(1) if match else None
@@ -1094,6 +1758,28 @@ def parse_exclusions(value: str | None) -> set[str]:
     if not scalar or scalar.lower() == "none":
         return set()
     return {part.strip().strip("`") for part in scalar.split(",") if part.strip().strip("`")}
+
+
+def parse_inventory_paths(value: str | None) -> tuple[set[str], str | None]:
+    scalar = markdown_scalar(value)
+    if not scalar:
+        return set(), "value is empty"
+    if scalar.lower().startswith("none with ") and scalar[10:].strip():
+        return set(), None
+    match = re.search(r"\bpaths:\s*(.+?)(?:;|$)", scalar, re.IGNORECASE)
+    if not match:
+        return set(), "value does not use a documented inventory form"
+    paths = {
+        part.strip().strip("`")
+        for part in match.group(1).split(",")
+        if part.strip().strip("`")
+    }
+    basis = scalar[match.end() :].lstrip("; ").strip()
+    if not paths or not basis:
+        return set(), "paths or inspection/digest basis is empty"
+    if any(not valid_decoded_path(os.fsencode(path)) for path in paths):
+        return set(), "a path is not canonical and repository-relative"
+    return paths, None
 
 
 def parse_recorded_inputs(value: str) -> set[str]:
@@ -1115,7 +1801,7 @@ def markdown_scalar(value: str | None) -> str | None:
 def evidence_rows(body: str) -> list[tuple[str, tuple[str, str, str, str]]]:
     rows: list[tuple[str, tuple[str, str, str, str]]] = []
     active: str | None = None
-    for raw_line in body.splitlines():
+    for raw_line in visible_markdown(body).splitlines():
         cells = [cell.strip() for cell in raw_line.strip().strip("|").split("|")]
         if cells == ["Command", "Working directory", "Result", "Observable evidence"]:
             active = "command"
@@ -1354,7 +2040,16 @@ def valid_encoded_path(value: str) -> bool:
         return False
     if any(part in {".", ".."} for part in value.split("/")):
         return False
-    return re.fullmatch(r"(?:[A-Za-z0-9._/-]|%[0-9A-F]{2})+", value) is not None
+    if re.fullmatch(r"(?:[A-Za-z0-9._/-]|%[0-9A-F]{2})+", value) is None:
+        return False
+    decoded = unquote_to_bytes(value)
+    return valid_decoded_path(decoded) and encode_path_bytes(decoded) == value
+
+
+def valid_decoded_path(value: bytes) -> bool:
+    return bool(value) and not value.startswith(b"/") and not value.endswith(b"/") and all(
+        part not in {b"", b".", b".."} for part in value.split(b"/")
+    )
 
 
 def resolution_entry(log: str, finding_id: str) -> str:
@@ -1628,7 +2323,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--root", help="Planning root; defaults through planning-config.json")
     result.add_argument("--scope", help="Limit reported findings to a path or artifact name")
     result.add_argument("--format", choices=("text", "json"), default="text", dest="output")
-    result.add_argument("--identity-mode", choices=("auto", "current", "historical"), default="auto", help="Compare recorded identities to the current worktree, historical objects only, or infer from completion status")
+    result.add_argument("--identity-mode", choices=("auto", "current", "historical"), default="auto", help="Use current-worktree checks (auto/current) or validate historical durable objects only")
     return result
 
 

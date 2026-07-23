@@ -89,14 +89,17 @@ artifacts reconciled merely because every identifier appears somewhere.
 
 - YAML parses and required common/type-specific fields exist.
 - Status values match `shared/frontmatter-schema.md`.
-- Required template sections exist and are nonempty where the schema requires
-  content.
+- Required template sections exist with the exact H2/H3 names consumed by the
+  validator. The scripted check proves heading presence; the semantic pass
+  separately rejects empty or placeholder-only required content.
 - Plan phase `doc` paths, `related` links, and decision scopes resolve.
 - Legacy status-subfolder layouts are invalid; report them without migration.
 
 ### Hierarchy, dependencies, and traceability
 
 - Plan README phase ids/statuses match their phase documents.
+- Every phase document is `type: phase`, matches its plan entry's title/id/status
+  and plan backlink, lives under that plan, and is listed exactly once.
 - Task and phase `depends_on` ids resolve, are not self-referential, and form no
   cycle.
 - Required requirements and acceptance criteria are numbered. `FR-NN`,
@@ -105,6 +108,12 @@ artifacts reconciled merely because every identifier appears somewhere.
   across the live decision ledger and archives. Citations resolve against the
   owning or explicitly related artifact rather than a repository-global id.
 - Complete parent entities contain no incomplete child entity.
+- When Git HEAD contains the prior artifact, spec requirement ids and plan
+  phase/task ids remain present in both index and worktree; deletion, rename,
+  type substitution, or hidden staged removal is invalid.
+- Approved/implemented specs and designs and approved/active/complete plans
+  contain no blocking Open Questions; retained bullets use the exact
+  `**non-blocking** — <rationale>` form.
 
 ### Review artifacts
 
@@ -134,6 +143,9 @@ Apply `shared/completion-evidence.md` literally:
 - Phase evidence covers every task and acceptance criterion. Plan evidence
   repeats exact task/phase evidence rollups and covers the plan deliverable;
   links alone do not satisfy the record.
+- Dirty Git snapshot manifests match current changed, nonignored untracked,
+  explicitly inventoried ignored, and directory inputs byte-for-byte and by
+  mode; staged/index content matches the tested worktree.
 - Non-complete entities may be pending or contain populated evidence awaiting
   validation.
 - Historical complete artifacts without conforming evidence are reported as

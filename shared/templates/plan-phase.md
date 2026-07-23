@@ -18,6 +18,33 @@ tasks: []
 
 # Phase {{PHASE_NUM}}: {{TITLE}}
 
+<!-- sdd-validate format contract:
+- Store this document as UTF-8 with LF line endings and keep the YAML
+  frontmatter as a mapping between standalone `---` delimiters.
+- Keep `title`, `type`, `status`, `created`, and `updated`; use a phase status
+  of `planned`, `in-progress`, `complete`, `blocked`, or `deferred`; dates use
+  `YYYY-MM-DD`. Task status uses the same vocabulary.
+- `plan`, `phase`, and `deliverable` are required. `tasks` is a YAML list of
+  mappings; each task requires nonempty `id`, `title`, `status`, and
+  `verification`. Task IDs are unique within the plan and use exactly
+  `<phase>.<digits>`; status uses the task status vocabulary.
+- Optional `depends_on` is a YAML list of task IDs from this plan. It contains
+  no unknown IDs, self-dependencies, or dependency cycles.
+- Every task mapping has one matching H2 beginning `## <task-id>:` (a space in
+  place of the colon is also accepted) with exact H3 headings `Subtasks`,
+  `Notes`, and `Completion Evidence` inside it.
+- FR-NN, NFR-NN, AC-NN, and D-NNNN citations must resolve through the plan's
+  `related` graph and applicable decision ledger. For approved/active/complete
+  plans, task verification/detail and phase Acceptance Criteria collectively
+  cite every requirement and acceptance criterion from every related spec.
+- A complete phase has only complete tasks, no unchecked `- [ ]` Acceptance
+  Criteria, and populated task and phase completion evidence. Phase evidence
+  uses one `### Task <id> Evidence Rollup` block per task and repeats that task's
+  Completion Evidence body verbatim in its block; complete plan evidence uses
+  one labeled phase/task rollup block per child and repeats every child
+  command/tool evidence row exactly in the associated block.
+-->
+
 ## Overview
 Brief description of what this phase delivers.
 
@@ -30,6 +57,8 @@ Brief description of what this phase delivers.
 
 ### Completion Evidence
 
+<!-- Keep the exact pending line until completion. Populated evidence uses the
+exact labels and table formats stated under Phase Completion Evidence below. -->
 Pending — not complete.
 
 <!-- Optional per task — include only when the task has a known tempting-but-wrong shortcut:
@@ -42,4 +71,25 @@ Pending — not complete.
 
 ## Phase Completion Evidence
 
+<!-- Keep the exact `Pending — not complete.` line until completion. When any
+task or phase evidence is populated, use the exact labels `Verified`,
+`Repository`, `VCS`, `Revision / base`, `Evidence exclusions`,
+`Governing intent`, `Ignored inputs`, `Directory inputs`, and
+`Identity recheck`, each as `- <label>: <value>`.
+`Verified` is `YYYY-MM-DD`; `Repository` is the exact resolved target root;
+`VCS` is `git`, `git-worktree`, `perforce`, or `none`; Git `Revision / base` is
+a full 40-hex revision optionally suffixed `-dirty` (`none` for no VCS).
+`Governing intent` uses
+`<64-hex SHA-256> at <durable path>; inputs: <comma-separated artifact paths
+and decision ids>`. Add `Content snapshot` with the same digest/location form
+for dirty Git, Perforce, or no VCS. `Ignored inputs` and `Directory inputs` use
+`none with <inspection basis>` or
+`paths: <comma-separated repository-relative paths>; <digests/basis>`.
+The exact table columns are
+`Command | Working directory | Result | Observable evidence` or
+`Tool / inspection | Context | Result | Observable evidence`. Command results
+use `PASS (exit 0)`; tool/inspection results use `PASS`. `Identity recheck`
+names the tool, an ISO date/time through minutes, and a matched/matching
+identity. Follow shared/completion-evidence.md for identity, rollup, and
+durability rules. -->
 Pending — not complete.

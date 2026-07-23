@@ -30,8 +30,8 @@ Before setting a task to `complete`, replace the pending marker with:
 - Revision / base: `<exact clean Git revision>`, `<Git base>-dirty`, `<Perforce have digest>`, or `none`
 - Evidence exclusions: `<exact repository-relative SDD artifact paths, or none>`
 - Governing intent: `<sha256 digest> at <durable projection path>; inputs: <paths and decision ids>`
-- Ignored inputs: `<captured paths and digests, or none with inspection basis>`
-- Directory inputs: `<captured empty/relevant directories and modes, or none with inspection basis>`
+- Ignored inputs: `paths: <comma-separated repository-relative paths>; <digests/basis>`, or `none with <inspection basis>`
+- Directory inputs: `paths: <comma-separated repository-relative paths>; <modes/basis>`, or `none with <inspection basis>`
 - Content snapshot: `<sha256 digest> at <durable canonical manifest path>` (required for dirty Git, Perforce, or no VCS)
 - Identity recheck: `<exact command/tool, timestamp, and matching revision/digest>`
 
@@ -221,7 +221,7 @@ Before setting a phase to `complete`, replace `Pending — not complete.` under
 - the VCS kind, exact exclusions, governing-intent digest, ignored/directory-
   input inventories, and successful identity recheck;
 - a rollup of every task id that repeats its populated `### Completion
-  Evidence` section verbatim;
+  Evidence` section verbatim under `### Task <id> Evidence Rollup`;
 - exact phase-level commands/tools and results when the phase acceptance
   criteria require integration or aggregate checks; and
 - either those aggregate checks or an explicit statement that no additional
@@ -243,7 +243,9 @@ Before setting a plan to `complete`, replace `Pending — not complete.` under
   input inventories, and successful identity recheck;
 - a rollup for every phase and task that repeats the exact commands/tools,
   context, results, and observable evidence from their completion sections;
-  links may supplement the rollup but references alone are insufficient;
+  use one `### Phase <id> Evidence Rollup` and one
+  `### Task <id> Evidence Rollup` block per child; links may supplement the
+  rollup but references alone are insufficient;
 - exact plan-level end-to-end/release commands or tools and results when the
   plan's deliverable requires them; and
 - either those final checks or an explicit statement that no additional
