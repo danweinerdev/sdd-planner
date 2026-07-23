@@ -9,6 +9,11 @@ review lanes. Runtime adapters may map those identifiers to specialized workers
 or models, but the skill never names or depends on them and retains its serial
 single-agent fallback (D-0008).
 
+`sdd-implement` uses the stable runtime-neutral implementation dispatch
+identifier `implement_task` when a runtime task name or description field is
+available. Runtime adapters may select a worker without the skill requesting an
+agent or model, and the primary-agent fallback remains transparent (D-0009).
+
 - **OpenCode**: point a skills discovery path at this repository (for example `ln -s <this-repo> ~/.agents`, so the skills resolve as `~/.agents/skills/<name>/SKILL.md`), or mount it there in a container.
 - **Codex**: install via the `codex-marketplace` repository, then install `codex-sdd-planner` from it. Start a new thread after installation so the skills are available.
 - Any other runtime that loads the `.agents/skills` convention or directory-sourced skills works the same way.

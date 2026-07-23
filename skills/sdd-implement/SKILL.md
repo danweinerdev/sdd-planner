@@ -20,7 +20,7 @@ Read the active plan and phase frontmatter. Read the decision ledger's frontmatt
 1. Select unfinished tasks whose dependencies are complete. Group independent tasks only when their expected file ownership does not overlap.
 2. For each task, inspect the relevant specification/design, code conventions, and test infrastructure. Implement the task and its tests as a focused change.
 3. Run the required verification and relevant project checks. Fix failures caused by the change. Report pre-existing failures distinctly, with actual output.
-4. Optionally use collaboration subagents for independent tasks when available. Give each agent one task, target path, acceptance criteria, and verification requirements. Do not depend on named plugin agents, specific models, or any particular delegation API.
+4. Optionally dispatch each independent implementation task through collaboration when available. When the runtime provides a task name or description field, set that field to exactly `implement_task` unchanged. Each dispatch supplies exactly one plan task, its target paths, acceptance criteria, `### Trap` content (or that no trap is present), relevant accepted-decision statements as constraints, and verification requirements. Do not request an agent, worker type, provider, or model. Do not depend on any delegation API; when collaboration is unavailable, the primary agent implements the same task transparently. (D-0009)
 5. Before marking a task complete, review its diff for correctness, scope, tests, and maintainability. Use the `sdd-code-review` skill for phase-level review or material risk.
 6. While the task remains `in-progress`, create `### Completion Evidence` if a
    legacy task lacks it, then replace its pending content using

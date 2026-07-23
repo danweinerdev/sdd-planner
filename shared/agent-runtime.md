@@ -34,6 +34,10 @@ through unchanged so an external runtime adapter can select a worker. The
 identifier is not an agent name and does not change the required fallback to a
 transparent single-agent workflow.
 
+Implementation dispatches use the stable identifier `implement_task` (D-0009).
+Pass it unchanged in the runtime task name or description field when available;
+do not request an agent, worker type, provider, or model.
+
 ## Project guidance
 
 Use `AGENTS.md` for optional repository-level guidance. Do not create, update, or discover `CLAUDE.md`, `.claude/`, or `~/.claude/` paths.

@@ -104,7 +104,7 @@ Shallow tasks with no subtasks or notes are not acceptable output — they're th
 ### 6. Rehearse (optional dry run)
 
 - Offer rehearsal when the plan is high-risk: multiple phases touching unfamiliar code, external API integration, data migrations, or the user asks for it. Otherwise skip this step silently.
-- **Mechanics:** create a scratch git worktree of the target repo (or a full copy for non-git targets) — never rehearse against the live tree. Use an implementation agent when available to execute the plan's tasks literally, wave by wave, with the same evidence rules as the `sdd-implement` skill (verification output pasted, STOP on plan-vs-reality mismatch).
+- **Mechanics:** create a scratch git worktree of the target repo (or a full copy for non-git targets) — never rehearse against the live tree. For each independent implementation task dispatched through collaboration, use the runtime task name or description field `implement_task` unchanged when available (D-0009); supply one exact plan task, target paths, acceptance criteria, trap, relevant accepted-decision statements, and verification requirements, without requesting an agent or model. Otherwise, the primary agent executes the task transparently. Execute tasks literally, wave by wave, with the same evidence rules as the `sdd-implement` skill (verification output pasted, STOP on plan-vs-reality mismatch).
 - **The product is plan bugs, not code:** wrong file paths, impossible task order, missing prerequisites, underspecified tasks, verification commands that don't run as written, traps that were missed. Collect them, discard the scratch tree and all code, and fix the plan before it moves to `approved`.
 - **Cost:** rehearsal roughly doubles the implementation spend for the rehearsed scope — that's why it's opt-in and aimed at high-risk plans.
 
@@ -182,4 +182,4 @@ See `shared/frontmatter-schema.md` for the phase frontmatter schema. Body contai
 - Existing plans: `Plans/` (status in each plan's `README.md` frontmatter)
 - Related specs: `Specs/`
 - Related designs: `Designs/`
-- Agent prompts: `shared/agent-prompts/researcher.md`, `shared/agent-prompts/plan-reviewer.md`; an implementation agent (if available) (rehearsal only)
+- Agent prompts: `shared/agent-prompts/researcher.md`, `shared/agent-prompts/plan-reviewer.md`; runtime-neutral implementation dispatch (if available, rehearsal only)

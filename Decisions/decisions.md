@@ -3,7 +3,7 @@ title: "Decision Ledger"
 type: decision-log
 status: active
 created: 2026-07-18
-updated: 2026-07-22
+updated: 2026-07-23
 tags: [decisions]
 related: []
 decisions:
@@ -95,6 +95,17 @@ decisions:
     confirmation: "sdd-code-review and shared/review-lanes.md define the same exact lens-to-identifier mapping; tests enforce that mapping, runtime-neutral identifier text, and fresh-context/Mixed fallback language."
     scope: [skills/sdd-code-review, shared/review-lanes.md, shared/agent-runtime.md, README.md]
     tags: [code-review, dispatch, collaboration, runtime-neutral]
+  - id: D-0009
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user-approved
+    statement: "SDD code implementation dispatches use the stable runtime-neutral identifier implement_task, which runtime adapters may map to a dedicated implementer role with independently configurable model and effort while bounded-editor remains for mechanical edits."
+    rejected: ["Route semantic code implementation through bounded-editor", "Embed OpenCode agent names or model identifiers in sdd-planner or sdd-beads"]
+    rationale: "Separating semantic implementation from mechanical editing allows stronger reasoning for code changes without coupling portable SDD workflows to a runtime or overspending on simple text edits."
+    confirmation: "sdd-implement emits implement_task without naming a runtime agent or model; runtime-adapter tests map it to implementer; model profile tests cover explicit selection and reasoner fallback."
+    scope: [skills/sdd-implement, shared/agent-runtime.md, README.md]
+    tags: [implementation, dispatch, collaboration, runtime-neutral, model-routing]
 ---
 
 # Decision Ledger
