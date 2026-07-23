@@ -40,7 +40,7 @@ When you need to define the technical architecture for a component or system bef
    - Then re-read the frontmatter and confirm it parses as YAML and includes `title`, `type`, `status`, `created`, `updated`, `tags`, `related`.
 
 5. **Record Decisions**
-   - After approval, record in the decision ledger per `shared/decision-log.md`: each Design Decision the user weighed in on (its rejected options go in the entry's `rejected[]`) and each user-resolved open question. Run the collision check before each append — a collision stops for the user. Scope entries to `Designs/<ComponentName>`, and **cite each new entry's id inline** in the governed Design Decision section (e.g., "(D-0012)"). Design Decisions the user never engaged with are the design's own content — don't promote them as `accepted`.
+   - After approval, record in the decision ledger per `shared/decision-log.md`: each Design Decision the user weighed in on (its rejected options go in the entry's `rejected[]`) and each user-resolved open question. Run the collision check before each append — a collision stops for the user. Scope entries to `Designs/<ComponentName>`, and **cite each new entry's id inline** in the governed Design Decision section (e.g., "(D-0017)"). Design Decisions the user never engaged with are the design's own content — don't promote them as `accepted`.
 
 ## Output
 ```

@@ -14,7 +14,7 @@ Before opening `shared/...`, follow symlinks in this loaded file's path, then de
 - When you need to break down a feature, project, or initiative into an actionable plan with phases, tasks, subtasks, and verification criteria.
 - When you want to deepen an existing plan — add tasks, fill in missing verification, expand subtask checklists, or refine acceptance criteria as you learn more.
 
-Both cases run through the same process below. The skill detects whether the named plan already exists and switches into **Revise mode** automatically. High-risk plans can optionally be **rehearsed** — dry-run in a scratch worktree to shake out plan bugs — before approval (step 6).
+Both cases run through the same process below. The skill detects whether the named plan already exists and switches into **Revise mode** automatically. High-risk plans can optionally be **rehearsed** in an isolated scratch environment to shake out plan bugs before approval (step 6).
 
 ## Process
 
@@ -51,22 +51,27 @@ Use this structured summary as the input to step 3 — every drafting decision s
 - Review the existing phase list against the researcher's gap analysis.
 - Identify: new tasks to add, existing tasks that need refinement (vague verification, missing subtasks, outdated notes), missing phases.
 - **Preserve completed work.** Never delete or rewrite tasks that are already `complete` or referenced in a phase debrief under `notes/`. Refinements to completed tasks should be additive (new acceptance criteria, follow-up tasks) or noted as future work.
-- Preserve existing task IDs and ordering. Append new tasks with the next available ID in their phase.
+- Preserve existing task IDs. Keep completed task ordering immutable, but
+  reorder non-complete work through its dependency order and phase placement
+  when that yields smaller complete units. Split a non-complete task only into
+  cohesive, independently verifiable task boundaries, assigning each new task
+  the next available ID in its phase; never renumber existing IDs (D-0015).
 
 **Both modes:**
-- **Plan tasks are feature-commit boundaries (D-0012).** Break work into
-  vertical or otherwise coherent slices that can each land as one clean,
-  complete, independently bisectable implementation commit. At every task
-  boundary the repository must build, relevant tests must pass, and the commit
-  must deliver an observable behavior or a complete internal capability that
-  later tasks can safely depend on. Do not use a task for an arbitrary layer,
-  file batch, or half-wired scaffold that requires a later task to restore
-  correctness. Conversely, do not combine independently complete feature
-  slices into one task merely because they share a phase.
-- **Subtasks stay inside the boundary.** Subtasks describe the mechanical steps
-  needed to complete the task's feature slice; they are not presumed commit
-  points and must not encourage incomplete intermediate commits. If a proposed
-  task cannot be committed with all named verification passing, split or
+- **Plan tasks are native-SCM revision boundaries (D-0014, D-0015).** Split
+  and reorder work into the smallest atomic units needed to establish clear
+  dependency order, but only where each resulting task remains a cohesive,
+  complete, independently bisectable feature or internal capability. At every
+  task boundary the repository must build, relevant tests must pass, and the
+  native SCM revision/checkpoint must deliver an observable behavior or a
+  complete internal capability that later tasks can safely depend on. Do not
+  use a task for an arbitrary layer, file batch, or half-wired scaffold that
+  requires a later task to restore correctness. Conversely, do not combine
+  independently complete feature slices merely because they share a phase.
+- **Subtasks stay inside the boundary.** Subtasks describe mechanical steps
+  needed to complete the task; they are not revision points and must not
+  encourage incomplete intermediate states. If a proposed task cannot be
+  recorded as a complete, verified native SCM revision/checkpoint, split or
   reorder it before approval.
 - **Every task must have a `verification` field** — a specific answer to "how do we know this work is good and complete?" that names specific behaviors to cover (e.g., "parser handles valid, malformed, and empty input", "endpoint returns 200 with valid payload and 400 with missing fields"). Vague criteria like "works correctly" or test counts are not acceptable — verification means each new or changed behavior has a corresponding check. Wherever the check is commandable, `verification` also names the exact command to run and the expected observable output (e.g., `cargo test auth::` — 14 tests pass, including the new refresh-expiry case), not just prose criteria. Prose-only criteria are acceptable only when no command can observe the behavior. "Works correctly" is never acceptable. In Revise mode, audit existing tasks and add `verification` to any that lack it. Where a task satisfies a spec acceptance criterion or requirement, its `verification` (or body section) cites the `AC-NN`/`FR-NN` id (`shared/frontmatter-schema.md` § Stable Identifiers) — phase-level Acceptance Criteria likewise cite the spec ids they roll up.
 - **Prospective criteria are not retrospective evidence.** Every task section,
@@ -98,9 +103,11 @@ Use this structured summary as the input to step 3 — every drafting decision s
 For each task, write a `## <ID>: Task Title` section that includes:
 - **`### Subtasks`** — a checklist (`- [ ]`) of the concrete implementation steps the implementer will work through. Not "implement X" — the actual steps a person would tick off (e.g., "add migration", "wire the handler", "cover the empty-input case in tests").
 - **`### Notes`** — implementation guidance, edge cases, references to specific design sections, gotchas the researcher surfaced. If a task can't be broken into subtasks because it depends on research the implementer will do, say that explicitly here — don't leave the section blank.
-- In `### Notes`, state the task's **commit boundary**: the complete behavior or
-  capability that will exist, the verification that keeps the commit green,
-  and any files or later concerns explicitly outside that commit. Cite D-0012.
+- In `### Notes`, state the task's **revision boundary**: the complete behavior
+  or capability that will exist, the verification that keeps the revision
+  green, and any files or later concerns explicitly outside that revision.
+  Cite D-0014 and D-0015. In a clearly labeled Git adapter note, this boundary
+  is a focused implementation commit; do not imply every SCM has Git commits.
 - **`### Completion Evidence`** — required, initially exactly
   `Pending — not complete.`; `sdd-implement` replaces it with what actually ran
   before changing task status to `complete`.
@@ -117,13 +124,17 @@ Shallow tasks with no subtasks or notes are not acceptable output — they're th
 
 - Render `shared/agent-prompts/plan-reviewer.md` (substitute the plan path and resolved paths) and dispatch it as a collaboration subagent in a fresh context that does not inherit the primary conversation. If collaboration is unavailable, perform the review yourself following that prompt and label it **self-review**.
 - Address any issues raised by the reviewer.
-- Treat a task that cannot land as a clean, complete, bisectable commit as a
-  plan-structure defect, not an implementation detail.
+- Treat a task that cannot land as a clean, complete, bisectable native SCM
+  revision/checkpoint as a plan-structure defect, not an implementation detail.
+  Check whether a task
+  can be split or reordered into smaller complete dependency-ordered units;
+  reject mechanical subtasks that would create incomplete revision boundaries
+  (D-0014, D-0015).
 
 ### 6. Rehearse (optional dry run)
 
 - Offer rehearsal when the plan is high-risk: multiple phases touching unfamiliar code, external API integration, data migrations, or the user asks for it. Otherwise skip this step silently.
-- **Mechanics:** create a scratch git worktree of the target repo (or a full copy for non-git targets) — never rehearse against the live tree. For each independent implementation task dispatched through collaboration, use the runtime task name or description field `implement_task` unchanged when available (D-0009); supply one exact plan task, target paths, acceptance criteria, trap, relevant accepted-decision statements, and verification requirements, without requesting an agent or model. Otherwise, the primary agent executes the task transparently. Execute tasks literally, wave by wave, with the same evidence rules as the `sdd-implement` skill (verification output pasted, STOP on plan-vs-reality mismatch).
+- **Mechanics:** detect the target SCM first; never rehearse against the live tree. **Git adapter:** create a scratch Git worktree of the target repository. **Non-Git neutral path:** create an isolated full copy through the target SCM's approved workspace/copy mechanism (or an isolated filesystem copy when no SCM applies). For each independent implementation task dispatched through collaboration, use the runtime task name or description field `implement_task` unchanged when available (D-0009); supply one exact plan task, target paths, acceptance criteria, trap, relevant accepted-decision statements, and verification requirements, without requesting an agent or model. Otherwise, the primary agent executes the task transparently. Execute tasks literally, wave by wave, with the same evidence rules as the `sdd-implement` skill (verification output pasted, STOP on plan-vs-reality mismatch).
 - **The product is plan bugs, not code:** wrong file paths, impossible task order, missing prerequisites, underspecified tasks, verification commands that don't run as written, traps that were missed. Collect them, discard the scratch tree and all code, and fix the plan before it moves to `approved`.
 - **Cost:** rehearsal roughly doubles the implementation spend for the rehearsed scope — that's why it's opt-in and aimed at high-risk plans.
 
@@ -134,25 +145,7 @@ Shallow tasks with no subtasks or notes are not acceptable output — they're th
   - **Create mode:** update the plan README frontmatter `status` to `approved`.
   - **Revise mode:** if `status` is `draft`, set it to `approved` once the review passes (same as Create mode — a re-run on a never-approved plan must not strand it in `draft`); otherwise leave `status` as-is.
 - Then re-read the frontmatter and confirm it parses as YAML and includes `title`, `type`, `status`, `created`, `updated`, `tags`, `related`.
-- **Record decisions**: after approval, record each user-resolved open question and each Key Decision the user actually made (not ones merely drafted for them) in the decision ledger per `shared/decision-log.md` — collision check before each append; a collision stops for the user. Scope entries to `Plans/<PlanName>` (or to the governing spec/design when the decision really lives there), and **cite each new entry's id inline** in the plan's Key Decisions section (e.g., "(D-0012)").
-
-### 8. Hand Off to an Execution Tracker (optional capability hook)
-
-After approval and decision recording are complete, inspect the skills exposed
-by the current runtime. If `sdd-beads-publish` is available, invoke that skill
-for the approved plan path. This is a capability handoff, not a bundled
-dependency: do not search for, install, vendor, or copy the `sdd-beads` plugin,
-and do not issue ad-hoc `bd` commands in place of its workflow.
-
-The handoff applies in both Create and Revise mode so an approved plan revision
-refreshes the existing Beads projection by stable SDD identity. The
-`sdd-beads-publish` skill owns workspace detection and idempotent publication.
-If it reports that Beads is unavailable, uninitialized, conflicted, or failed,
-leave the approved SDD plan unchanged and report the handoff result explicitly;
-never roll back approval and never claim that Beads was synchronized.
-
-If `sdd-beads-publish` is not exposed by the runtime, skip this step silently.
-The `sdd-plan` skill must remain fully functional as a standalone SDD workflow.
+- **Record decisions**: after approval, record each user-resolved open question and each Key Decision the user actually made (not ones merely drafted for them) in the decision ledger per `shared/decision-log.md` — collision check before each append; a collision stops for the user. Scope entries to `Plans/<PlanName>` (or to the governing spec/design when the decision really lives there), and **cite each new entry's id inline** in the plan's Key Decisions section (e.g., "(D-0017)").
 
 ## Output
 ```
@@ -165,11 +158,6 @@ Plans/<PlanName>/
 ```
 
 Plan lifecycle (`draft` → `approved` → `active` → `complete`) is tracked in the README frontmatter `status` field. The plan directory stays put.
-
-When the optional `sdd-beads-publish` capability is available, an approved
-plan is also projected into Beads after the SDD artifacts and decision records
-are finalized. That projection is operational coordination state; it does not
-replace this plan as the source of truth.
 
 ## Document Structure
 
@@ -188,7 +176,8 @@ See `shared/frontmatter-schema.md` for the phase frontmatter schema. Body contai
 - **Overview**: What the phase delivers
 - **Task sections**: Each headed by task ID (e.g., `## 1.1: Task Title`) with:
   - `### Subtasks` — checklist of concrete implementation steps
-  - `### Notes` — implementation guidance, edge cases, design references
+  - `### Notes` — implementation guidance, edge cases, design references, and
+    the complete native-SCM revision boundary
   - `### Completion Evidence` — pending until populated with exact retrospective evidence
   - `### Trap` — optional; the known tempting-but-wrong shortcut for this task and why it's wrong (omit when a task has none)
 - **Acceptance Criteria**: Phase-level completion criteria as a checklist

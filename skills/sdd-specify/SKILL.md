@@ -40,7 +40,7 @@ When you need to define the requirements for a feature before designing or imple
    - Then re-read the frontmatter and confirm it parses as YAML and includes `title`, `type`, `status`, `created`, `updated`, `tags`, `related`.
 
 5. **Record Decisions**
-   - After approval, record each user-resolved open question and each user-made scoping/requirements choice in the decision ledger per `shared/decision-log.md` (run its collision check before each append — a collision stops for the user). Scope entries to `Specs/<FeatureName>`, and **cite each new entry's id inline** in the governed spec section (e.g., "(D-0012)") — the bidirectional link is what makes supersession detection work. Skip questions marked non-blocking without a user answer — nothing was decided.
+   - After approval, record each user-resolved open question and each user-made scoping/requirements choice in the decision ledger per `shared/decision-log.md` (run its collision check before each append — a collision stops for the user). Scope entries to `Specs/<FeatureName>`, and **cite each new entry's id inline** in the governed spec section (e.g., "(D-0017)") — the bidirectional link is what makes supersession detection work. Skip questions marked non-blocking without a user answer — nothing was decided.
 
 ## Output
 ```

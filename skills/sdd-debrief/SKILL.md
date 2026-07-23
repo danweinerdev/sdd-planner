@@ -59,10 +59,24 @@ When a plan phase has been completed (or substantially completed) and you want t
      section to conform to `shared/completion-evidence.md`, and every phase
      acceptance criterion to be checked. Stop without changing phase status if
      any requirement is missing.
-   - Populate `## Phase Completion Evidence` with the verification date,
-     canonical source identity, exact exclusions and identity recheck, a
-     verbatim rollup of each task's evidence, and exact
-     aggregate commands/tools and results. If no additional
+    - Freeze a concrete native-SCM phase revision/range and run all four
+      `sdd-code-review` lanes before phase completion. Persist the review
+      artifact. `Needs changes` or `Blocked` stops completion. Plan and
+       give every review-driven material fix a new planned task ID and implement
+       it as a complete reviewable task revision, even when it is small, then
+       freeze the new range and repeat all four lanes. Any material code change after a
+      review invalidates it; repeat until the final review is `Aligned` and the
+      reviewed phase is materially unchanged (D-0014).
+    - Populate `## Phase Completion Evidence` with the verification date,
+      canonical source identity, exact exclusions and identity recheck, a
+      verbatim rollup of each task's evidence, and exact
+      aggregate commands/tools and results. Include the persisted final aligned
+      review artifact path and frozen revision/range identity using `- Final
+      aligned review: <artifact path>; frozen: <exact rev>`; it must exactly
+      match frontmatter `rev`. For a Git planning root, commit the exact review
+      artifact at HEAD with the lifecycle record. For Perforce or no-SCM
+      planning roots, report that no validated durable lifecycle adapter is
+      available and leave the phase non-complete. If no additional
      phase-level check applies, state why task evidence covers every phase
      acceptance criterion.
    - Re-read that section, require every required aggregate check to have

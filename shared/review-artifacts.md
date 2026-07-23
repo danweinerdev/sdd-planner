@@ -45,6 +45,83 @@ The body carries one section per finding — the concrete scenario, why it matte
 
 Artifact `status`: `open` while any finding is `open`; `resolved` when every finding has a terminal disposition; `superseded` when a newer review of the same target replaces it (link both ways, like ledger supersession).
 
+## Phase-completion review gate
+
+When a review is used to complete a phase, it is a persisted final gate, not a
+general advisory review. Freeze a concrete native-SCM phase revision/range, run
+all four `sdd-code-review` lanes, and record these frontmatter fields:
+
+```yaml
+review_scope: phase
+frozen: true
+verdict: Aligned
+reviewed_phase_intent_sha256: "<lowercase SHA-256 of canonical phase projection>"
+reviewed_plan_intent_sha256: "<lowercase SHA-256 of canonical plan README projection>"
+review_mode: independent # independent | mixed | single-agent
+lane_results:
+  - lane: review_plan_drift
+    result: PASS/Aligned
+    reviewed_identity: "<exact rev>"
+    evidence: "<nonempty auditable result>"
+  - lane: review_quality
+    result: PASS/Aligned
+    reviewed_identity: "<exact rev>"
+    evidence: "<nonempty auditable result>"
+  - lane: review_spec_compliance
+    result: PASS/Aligned
+    reviewed_identity: "<exact rev>"
+    evidence: "<nonempty auditable result>"
+  - lane: review_blind_spots
+    result: PASS/Aligned
+    reviewed_identity: "<exact rev>"
+    evidence: "<nonempty auditable result>"
+```
+
+`lane_results` is the auditable four-lane record: it contains exactly these four
+lanes once, every result is `PASS/Aligned`, every `reviewed_identity` exactly
+equals `rev`, and every evidence value is a specific concrete observation (not
+blank or a generic conclusion such as `passed`, `ok`, `aligned`, `success`, `No
+findings`, or `No blocking findings`). Record inspected paths, behaviors, or
+observations even when a lane is clean. `review_mode` records how the lanes ran:
+`independent`, `mixed`, or `single-agent`.
+
+`reviewed_phase_intent_sha256` and `reviewed_plan_intent_sha256` are required,
+lowercase 64-hex SHA-256 digests. At review time, compute them from the phase and
+plan README respectively with the validator's existing `project_artifact`
+normalization, then hash those canonical bytes. The normalization deliberately
+removes lifecycle-only status, timestamp, completion-evidence, and checklist
+changes, while retaining scope, tasks, acceptance criteria, and plan intent.
+Before phase completion the validator recomputes both projections from the
+current planning root and requires an exact digest match. This applies when the
+planning root is external to the reviewed repository as well as when it is in
+that repository.
+
+The phase's `Final aligned review` evidence points to this artifact and its
+frozen identity. `Needs changes` or `Blocked` forbids phase completion. Every
+review-driven material code fix must receive a new planned task id and be
+implemented as a complete, reviewable task revision, even when it is small.
+Any material change after review (behavior, public contract,
+architecture, security, concurrency, persistence, error handling, acceptance
+coverage, or meaningful test logic) supersedes the review and requires a fresh
+full four-lane review of the new frozen range. Repeat until the final review is
+`Aligned` and its reviewed state is materially unchanged.
+
+Use the exact phase-evidence syntax `- Final aligned review: <artifact path>;
+frozen: <revision/range>`; the nonempty `frozen` value must exactly equal this
+artifact's `rev`. **Git review-identity adapter:** `rev` and `frozen` are only an
+exact `<full40>..<full40>` range with distinct endpoints; every named commit must
+exist in the target repository, the base must be an ancestor of the endpoint, and
+the endpoint must exactly equal the phase evidence's clean full `Revision /
+checkpoint` commit. **Git lifecycle
+adapter:** the exact cited artifact must be
+committed at planning-root `HEAD`, and the committed bytes/frontmatter must
+still establish resolved status, this phase's `review_of`, `rev`, frozen phase
+scope, `Aligned`, review mode, and all four lane results. These are adapter
+rules, not universal SCM assumptions: no deterministic non-Git target
+review-identity adapter or validated Perforce/no-SCM lifecycle adapter is
+currently available, so those cases must leave the phase non-complete with the
+adapter diagnostic.
+
 ## Resolution Log
 
 When findings are acted on, append (never rewrite) entries under `## Resolution Log` at the bottom of the review file, one per finding disposition:

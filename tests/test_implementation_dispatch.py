@@ -48,7 +48,7 @@ class ImplementationDispatchTests(unittest.TestCase):
         self.assertIn("stable runtime-neutral identifier implement_task", decisions)
         self.assertIn("sdd-implement emits implement_task", decisions)
 
-    def test_plan_tasks_are_clean_complete_bisectable_commit_boundaries(self):
+    def test_task_boundaries_are_atomic_reviewed_native_scm_revisions(self):
         plan = (ROOT / "skills" / "sdd-plan" / "SKILL.md").read_text(
             encoding="utf-8"
         ).lower()
@@ -65,8 +65,12 @@ class ImplementationDispatchTests(unittest.TestCase):
         for text in (plan, implement, reviewer, phase_template):
             for required in ("clean", "complete", "bisectable"):
                 self.assertIn(required, text)
-        self.assertIn("feature-commit boundaries", plan)
+        self.assertIn("native-scm revision boundaries", plan)
+        self.assertIn("split\n  and reorder", plan)
         self.assertIn("subtasks stay inside the boundary", plan)
+        self.assertIn("focused\n   code review", implement)
+        self.assertIn("complete\n   state", implement)
+        self.assertIn("git adapter", implement)
         self.assertIn("scoped implementation commit", implement)
         self.assertIn("scoped lifecycle commit", implement)
         self.assertNotIn("commit only when the user or repository policy", implement)
@@ -78,16 +82,20 @@ class ImplementationDispatchTests(unittest.TestCase):
         implement = (ROOT / "skills" / "sdd-implement" / "SKILL.md").read_text(
             encoding="utf-8"
         ).lower()
-        self.assertIn("normal git completion: commit first", contract)
-        self.assertIn("do not create a snapshot manifest", contract)
+        self.assertIn("native scm completion", contract)
+        self.assertIn("git adapter: commit first", contract)
+        self.assertIn("normal git completion creates no snapshot manifest", contract)
         self.assertIn("no governing-intent object", implement)
         self.assertIn("fallback", contract)
         self.assertIn("not a reason to postpone", contract)
 
-    def test_decisions_govern_commit_first_task_boundaries(self):
+    def test_decisions_govern_atomic_reviewed_task_boundaries(self):
         decisions = (ROOT / "Decisions" / "decisions.md").read_text(encoding="utf-8")
         self.assertIn("id: D-0011", decisions)
-        self.assertIn("id: D-0012", decisions)
+        self.assertIn("id: D-0016", decisions)
+        self.assertIn("id: D-0017", decisions)
+        self.assertIn("id: D-0014", decisions)
+        self.assertIn("id: D-0015", decisions)
         self.assertIn("clean, complete, and independently bisectable", decisions)
 
     def test_graph_aware_scope_decision_is_recorded(self):

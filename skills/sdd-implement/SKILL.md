@@ -19,38 +19,57 @@ Read the active plan and phase frontmatter. Read the decision ledger's frontmatt
 
 1. Select unfinished tasks whose dependencies are complete. Group independent tasks only when their expected file ownership does not overlap.
 2. For each task, confirm it defines one clean, complete, independently
-   bisectable feature slice and an explicit commit boundary (D-0012). If it is
-   a horizontal half-feature, combines independently complete slices, or cannot
-   leave the repository buildable and passing at its boundary, stop and revise
-   the plan rather than improvising commit grouping. Then inspect the relevant
+   bisectable feature or internal-capability slice and an explicit native SCM
+   revision/checkpoint boundary (D-0014, D-0015). Split or reorder it when a
+   smaller complete dependency-ordered unit is available. If it is a horizontal
+   half-feature, combines independently complete slices, or cannot leave the
+   repository buildable and passing at its boundary, stop and revise the plan
+   rather than improvising revision grouping. Then inspect the relevant
    specification/design, code conventions, and test infrastructure and
    implement the task and its tests as that one focused change.
 3. Run the required verification and relevant project checks. Fix failures caused by the change. Report pre-existing failures distinctly, with actual output.
 4. Optionally dispatch each independent implementation task through collaboration when available. When the runtime provides a task name or description field, set that field to exactly `implement_task` unchanged. Each dispatch supplies exactly one plan task, its target paths, acceptance criteria, `### Trap` content (or that no trap is present), relevant accepted-decision statements as constraints, and verification requirements. Do not request an agent, worker type, provider, or model. Do not depend on any delegation API; when collaboration is unavailable, the primary agent implements the same task transparently. (D-0009)
-5. Before marking a task complete, review its diff for correctness, scope,
-   tests, maintainability, and whether it is a complete bisectable feature
-   slice. Inspect status plus staged and unstaged diffs; exclude unrelated work.
-   Use the `sdd-code-review` skill for phase-level review or material risk.
-6. In a commit-capable Git workflow where the user or repository policy
-   authorizes commits, create the scoped implementation commit now (D-0003,
-   D-0011, D-0012). It contains the complete task implementation and tests, not
-   another task and not SDD lifecycle/evidence bookkeeping. Confirm the commit
-   tree contains the exact verified bytes and the repository remains buildable
-   and testable at that revision. Do not defer this commit in order to collect
-   evidence, and do not create a dirty snapshot or `evidence/` folder merely
-   because the task status is still `in-progress`.
+5. Before finalizing a task's native SCM revision/checkpoint, perform a focused
+   code review of its complete diff for correctness, scope, tests,
+   maintainability, and whether it is a complete bisectable feature slice.
+   Inspect the SCM status and relevant diff views; exclude unrelated work. The
+   focused review is required for every completed task. Use `sdd-code-review`
+   for phase-level review or material risk; its four-lane phase gate is not a
+   substitute for this task review (D-0014).
+6. Record the reviewed, verified task as the detected SCM's focused native
+   revision/checkpoint. It contains the complete task implementation and tests,
+   not another task and not SDD lifecycle/evidence bookkeeping. Confirm the
+   recorded revision/checkpoint contains the exact verified bytes and the
+   repository remains buildable and testable at that identity. Do not defer the
+   native revision/checkpoint merely to collect evidence.
+
+   **Git adapter:** in a commit-capable Git workflow where commits are
+   authorized, this native revision is one scoped implementation commit
+   (D-0011, D-0016, D-0017). Do not create a dirty snapshot or `evidence/`
+   folder merely because the task status is still `in-progress`.
 7. While the task remains `in-progress`, create `### Completion Evidence` if a
    legacy task lacks it, then replace its pending content using
    `shared/completion-evidence.md`:
-   record the verification date, the implementation commit as canonical tested
-   source identity, its immediate commit/tree identity recheck, every exact
+   record the verification date, the native SCM revision/checkpoint as canonical
+   tested source identity, its immediate identity recheck, every exact
    command with working directory and exit status, every non-command inspection,
    and the observable results satisfying the task's prospective `verification`.
+    Also record `Focused review` in strict syntax: for Git, exactly `git show
+    <full40>` for final-commit review or `git diff <full40>..<full40>` for range
+    review in backticks before `; complete task diff reviewed for correctness,
+    scope, tests, maintainability, and task boundary`; then record `Reviewed candidate
+    / final` as the exact native SCM identity. **Git review-identity adapter:**
+     it is the task full commit or `diff: <full40>..<full40>` with distinct commits,
+     a base that is the task revision's direct first parent, and an endpoint at that
+     revision, with both commits present in the target repository; the command
+     uses that identity with no extra operands. Record `Review
+    result: PASS/Aligned`. Other SCMs use their native exact identity; do not
+    claim unsupported alternate-diff validation.
    The normal commit-backed path requires no governing-intent object, snapshot,
    content-object directory, or evidence folder. Only when a normal commit is
    genuinely unavailable or unauthorized may the fallback contract capture a
    canonical manifest and content objects; record that constraint and do not
-   use fallback capture as a substitute for an authorized feature commit. Do
+   use fallback capture as a substitute for an authorized native revision. Do
    not paste a claim
    unsupported by output read in this session or a linked contemporaneous
    durable record.
@@ -61,15 +80,21 @@ Read the active plan and phase frontmatter. Read the decision ledger's frontmatt
    Only then set the task status to `complete`, check completed subtasks, and
    update frontmatter. A task with absent, pending, vague, or failing evidence
    stays non-complete.
-9. Commit the task status, checkboxes, and completion evidence as a separate
-   scoped lifecycle commit. This bookkeeping commit must not include source or
-   another feature slice. Re-read the committed artifact and run required SDD
-   validation; completion is not finalized while either the implementation or
-   lifecycle record remains uncommitted. This lifecycle-commit requirement also
-   applies when source identity used a fallback snapshot; a non-Git planning
-   root may preserve handoff state but must remain non-complete until an approved
-   durable lifecycle transport exists. Evidence continues to name the tested
+9. Record the task status, checkboxes, and completion evidence in the planning
+   lifecycle artifact through the planning root's approved durable SCM
+   revision/checkpoint. This lifecycle record must preserve the task's complete
+   state and must not mix source or another feature slice. Re-read the recorded
+   artifact and run required SDD validation; completion is not finalized while
+   either the implementation or lifecycle record lacks its durable native SCM
+   identity. A planning root without approved durable lifecycle transport may
+   preserve handoff state but remains non-complete.
+
+   **Git adapter:** make a separate scoped lifecycle commit containing only
+   plan/evidence bookkeeping. Evidence continues to name the tested
    implementation commit, avoiding a self-referential lifecycle SHA.
+   **Unsupported transport:** no validated durable lifecycle adapter currently
+   exists for Perforce or no-SCM planning roots, so leave the task non-complete
+   and report that limitation rather than claiming lifecycle completion.
 
 ## Escalate
 

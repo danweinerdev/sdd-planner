@@ -63,6 +63,19 @@ A review artifact (`<target-home>/reviews/…`, type `review`) carries `findings
 
 Per-finding statuses (entry-level, not artifact statuses): `open`, `fixed`, `deferred`, `rejected`, `answered`. The artifact is `resolved` only when no finding is `open`; `superseded` links to the newer review of the same target.
 
+A phase-completion review additionally requires `review_scope: phase`,
+`frozen: true`, `verdict: Aligned`, and `review_mode` of `independent`, `mixed`,
+or `single-agent`. Its `lane_results` is exactly four mappings, one for every
+stable lane: `review_plan_drift`, `review_quality`, `review_spec_compliance`,
+and `review_blind_spots`. Each mapping has `lane`, `result: PASS/Aligned`,
+`reviewed_identity` exactly equal to the review's `rev`, and nonempty `evidence`.
+It also requires `reviewed_phase_intent_sha256` and
+`reviewed_plan_intent_sha256`: lowercase SHA-256 digests of the canonical
+`project_artifact` projections captured at review time. These bind the gate to
+the reviewed phase and plan README intent while excluding lifecycle-only fields.
+The complete example and Git-specific frozen-identity adapter are in
+`shared/review-artifacts.md`.
+
 ## Decision Ledger Schema
 
 The decision ledger (`Decisions/decisions.md`, type `decision-log`) carries a `decisions[]` frontmatter array — the same structured-list convention as `phases[]`/`tasks[]`. Entry fields, lifecycle rules (append-only; accepted entries mutate only via `status` + `superseded_by`), the collision procedure, and distribution rules are defined in `shared/decision-log.md` — the single source of truth for this artifact.
@@ -135,7 +148,7 @@ tasks:
 | `title` | yes | Human-readable task title |
 | `status` | yes | Task status (see status values above) |
 | `depends_on` | no | List of task IDs this task depends on |
-| `verification` | yes | How we know the work is good and complete — name each new or changed behavior to cover, not test counts. Where the check is commandable, include the exact command and expected observable output (e.g., `cargo test auth:: — 14 pass incl. the new refresh-expiry case`); prose-only criteria are for behavior no command can observe. The task is also the normal implementation-commit boundary: it must be a complete, independently bisectable feature slice that leaves the repository buildable and its named checks passing (D-0012). |
+| `verification` | yes | How we know the work is good and complete — name each new or changed behavior to cover, not test counts. Where the check is commandable, include the exact command and expected observable output (e.g., `cargo test auth:: — 14 pass incl. the new refresh-expiry case`); prose-only criteria are for behavior no command can observe. The task is the native SCM revision/checkpoint boundary: it must be a cohesive, complete, independently bisectable feature or internal capability that leaves the repository buildable and its named checks passing (D-0014, D-0015). Git-specific commit behavior belongs in a clearly labeled adapter section. |
 
 Body contains task detail sections keyed by task ID as headings:
 
@@ -148,7 +161,7 @@ Body contains task detail sections keyed by task ID as headings:
 
 ### Notes
 Implementation notes, including the complete feature/capability that defines
-this task's clean bisectable commit boundary (D-0012)...
+this task's clean bisectable native SCM revision boundary (D-0014, D-0015)...
 
 ### Completion Evidence
 Pending — not complete.
@@ -163,7 +176,21 @@ Every task section also contains `### Completion Evidence`, and every phase
 contains `## Phase Completion Evidence` after its Acceptance Criteria. Both
 follow `shared/completion-evidence.md`. Prospective task `verification` is not
 completion evidence; the evidence section records what actually ran. Missing
-or pending evidence forbids a `complete` transition.
+or pending evidence forbids a `complete` transition. A completed phase also
+records its final persisted `Aligned` four-lane, frozen phase-review identity;
+any material post-review code change requires a fresh full review. Completed
+tasks additionally record a focused review in strict syntax: for Git, exactly
+`git show <full40>` for a final commit or `git diff <full40>..<full40>` for a
+range in backticks before `; complete task diff reviewed for correctness, scope,
+tests, maintainability, and task boundary`, then the exact reviewed
+candidate/final native SCM identity and `PASS/Aligned` result. The Git
+adapter accepts only the task's full commit or `diff: <full40>..<full40>` with
+distinct endpoints, the task commit's direct first parent as base, and that task
+revision as endpoint; the exact command uses that identity with no extra
+operands. Other SCMs record their native exact identity until a
+deterministic review-identity adapter exists.
+Phase evidence uses the strict `Final aligned review: <artifact path>; frozen:
+<exact rev>` syntax, with exact equality to review frontmatter `rev`.
 
 ## Debrief Schema
 

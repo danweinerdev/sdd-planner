@@ -42,6 +42,31 @@ class ReviewDispatchTests(unittest.TestCase):
             self.assertNotIn(forbidden, skill)
             self.assertNotIn(forbidden, shared)
 
+    def test_phase_completion_requires_persisted_frozen_aligned_four_lane_review(self):
+        skill = (ROOT / "skills" / "sdd-code-review" / "SKILL.md").read_text()
+        evidence = (ROOT / "shared" / "completion-evidence.md").read_text()
+        artifacts = (ROOT / "shared" / "review-artifacts.md").read_text()
+        validator = (ROOT / "scripts" / "sdd_validate.py").read_text()
+        for text in (skill, evidence, artifacts):
+            for required in (
+                "frozen",
+                "Aligned",
+                "Needs changes",
+                "Blocked",
+                "all four",
+                "material",
+            ):
+                self.assertIn(required, text)
+        for identifier in DISPATCH_IDS:
+            self.assertIn(identifier, artifacts)
+        for required in ("review_mode", "lane_results", "reviewed_identity", "PASS/Aligned"):
+            self.assertIn(required, artifacts)
+            self.assertIn(required, validator)
+        self.assertIn("Final aligned review", validator)
+        self.assertIn("SDD166", validator)
+        self.assertIn("SDD167", validator)
+        self.assertIn("SDD172", validator)
+
     def test_manifest_version_is_semver(self):
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())
         self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")

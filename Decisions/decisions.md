@@ -31,7 +31,8 @@ decisions:
     tags: [plugin-resources, workspace-boundary, read-in-place]
   - id: D-0003
     kind: decision
-    status: accepted
+    status: superseded
+    superseded_by: D-0016
     date: 2026-07-18
     decided_by: user
     statement: "Completed repository changes must be recorded in clean, scoped commits."
@@ -130,7 +131,8 @@ decisions:
     tags: [git, commits, workflow, completion, evidence, snapshots]
   - id: D-0012
     kind: decision
-    status: accepted
+    status: superseded
+    superseded_by: D-0017
     date: 2026-07-23
     decided_by: user
     statement: "Implementation plans must break work into task-sized feature slices whose completed implementation commits are clean, complete, and independently bisectable; subtasks are steps within that commit boundary, not separate incomplete commits."
@@ -150,6 +152,52 @@ decisions:
     confirmation: "sdd_validate.py computes a transitive closure over discovered artifacts for --scope, preserves global operational and decision-ledger diagnostics, reports artifacts_in_scope, and tests plan-owned, transitive-related, unrelated, unresolved, and severity behavior."
     scope: [scripts/sdd_validate.py, skills/sdd-validate, tests]
     tags: [validation, scope, graph, related-artifacts, deterministic-checks]
+  - id: D-0014
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "SDD plans decompose implementation into cohesive, complete, independently bisectable task units that are code-reviewed and recorded in their complete state as native SCM revisions; phase completion requires a full multi-lane SDD code review, and material review-driven changes require another full multi-lane review until no material changes remain."
+    rejected: ["Use partial or layer-only task boundaries", "Complete a phase without the full SDD review lanes", "Treat a materially changed post-review implementation as still reviewed"]
+    rationale: "Complete task revisions preserve reviewability and bisectability, while an iterative phase gate validates the integrated result rather than only its individual pieces."
+    confirmation: "Plan review checks task cohesion and completeness; implementation reviews and records each completed task through the detected SCM; phase completion remains blocked until all four SDD code-review lanes pass on the final materially unchanged phase diff."
+    scope: [shared/review-lanes.md, shared/templates/plan-phase.md, shared/agent-prompts/plan-reviewer.md, skills/sdd-plan, skills/sdd-implement, skills/sdd-code-review, skills/sdd-validate, tests]
+    tags: [planning, tasks, scm, commits, bisectability, code-review, phase-gate]
+  - id: D-0015
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "The planner may split and reorder work into the smallest atomic task units needed to establish dependency order, provided every resulting task still lands a cohesive, complete, independently bisectable feature or internal capability."
+    rejected: ["Preserve oversized tasks when smaller complete dependency-ordered units are available", "Create atomic tasks that leave a half-wired or broken intermediate state"]
+    rationale: "Smaller complete units expose prerequisite order and reduce implementation risk without sacrificing green, reviewable revision boundaries."
+    confirmation: "Plan creation and review explicitly test whether tasks should be split or reordered for dependency clarity and reject any resulting boundary that is incomplete, unbuildable, or not independently verifiable."
+    scope: [shared/frontmatter-schema.md, shared/templates/plan-phase.md, shared/agent-prompts/plan-reviewer.md, skills/sdd-plan, skills/sdd-implement, tests]
+    tags: [planning, decomposition, tasks, dependencies, atomicity, bisectability]
+  - id: D-0016
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "Completed repository changes must be recorded as clean, scoped native SCM revisions or checkpoints; in Git this means commits, while other SCMs use their own durable revision primitive."
+    rejected: ["Make Git commits a universal SDD requirement", "Leave completed changes in an unrecorded mutable workspace state", "Mix unrelated changes in one native SCM revision"]
+    rationale: "SDD remains SCM-agnostic while preserving durable, reviewable, and reversible completed states through each repository's native source-control mechanism."
+    confirmation: "Lifecycle skills detect the SCM, use its native durable revision/checkpoint, and keep Git commit instructions inside a clearly labeled Git adapter."
+    scope: [README.md, shared/vcs-detection.md, shared/completion-evidence.md, skills/sdd-implement, skills/sdd-validate, tests]
+    tags: [scm, revisions, commits, workflow, portability]
+    supersedes: D-0003
+  - id: D-0017
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "Implementation plans use the smallest dependency-ordered task units that each produce a cohesive, complete, independently bisectable native SCM revision or checkpoint; subtasks are mechanical steps within that complete boundary."
+    rejected: ["Define every task as a Git commit regardless of SCM", "Create incomplete intermediate task revisions", "Combine independently complete dependency-ordered units into an oversized task"]
+    rationale: "Native revision boundaries preserve SCM neutrality while small complete units make ordering explicit, reduce implementation risk, and keep every landed state reviewable and green."
+    confirmation: "Planning and plan review split and reorder unfinished work where useful, reject incomplete boundaries, and describe Git commits only in Git-specific adapter guidance."
+    scope: [README.md, shared/frontmatter-schema.md, shared/agent-prompts/plan-reviewer.md, shared/templates/plan-phase.md, skills/sdd-plan, skills/sdd-implement, tests]
+    tags: [planning, tasks, scm, dependencies, atomicity, bisectability]
+    supersedes: D-0012
 ---
 
 # Decision Ledger

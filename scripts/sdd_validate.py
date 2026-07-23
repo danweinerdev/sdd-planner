@@ -135,6 +135,7 @@ class Validator:
         self.identity_mode = identity_mode
         self.artifact_repos: dict[str, Path] = {}
         self.plan_repos: dict[str, Path] = {}
+        self._planning_root_scm_name: str | None = None
         self._configure_repositories()
 
     def error(self, artifact: Artifact | None, code: str, message: str, correction: str, line: int = 1, path: str | None = None, implicated: Iterable[str] = ()) -> None:
@@ -178,6 +179,12 @@ class Validator:
 
     def _repo_for_artifact(self, artifact: Artifact) -> Path:
         return self.artifact_repos.get(artifact.rel, self._repo_for_path(artifact.rel))
+
+    def _planning_root_scm(self) -> str:
+        """Return the lifecycle transport available for this planning root."""
+        if self._planning_root_scm_name is None:
+            self._planning_root_scm_name = detected_scm(self.root)
+        return self._planning_root_scm_name
 
     def _capture_path(self, artifact: Artifact, recorded: str) -> Path:
         value = Path(recorded)
@@ -612,6 +619,12 @@ class Validator:
             phase_evidence = sections.get("Phase Completion Evidence")
             if phase_evidence:
                 rollup = phase_evidence[1]
+                task_identities = self._phase_task_git_identities(
+                    artifact, tasks, task_evidence, phase_evidence[0]
+                )
+                self._phase_final_review(
+                    artifact, rollup, phase_evidence[0], task_identities
+                )
                 for task in tasks:
                     if not isinstance(task, dict) or task.get("status") != "complete":
                         continue
@@ -626,6 +639,268 @@ class Validator:
                             f"Add `### Task {task_id} Evidence Rollup` and repeat its populated Completion Evidence body verbatim.",
                             phase_evidence[0],
                         )
+
+    def _phase_task_git_identities(
+        self,
+        phase: Artifact,
+        tasks: list[Any],
+        task_evidence: dict[str, str],
+        line: int,
+    ) -> list[tuple[str, str]]:
+        """Extract clean-Git task commits for inclusion in a phase review range."""
+        identities: list[tuple[str, str]] = []
+        if detected_scm(self._repo_for_artifact(phase)) != "git":
+            return identities
+        for task in tasks:
+            if not isinstance(task, dict) or task.get("status") != "complete":
+                continue
+            task_id = str(task.get("id", ""))
+            evidence = task_evidence.get(task_id, "")
+            vcs = markdown_scalar(evidence_value(evidence, "VCS")) or "missing"
+            revision = markdown_scalar(
+                evidence_value(evidence, "Revision / checkpoint")
+            ) or "missing"
+            if vcs in {"git", "git-worktree"} and re.fullmatch(
+                r"[0-9a-fA-F]{40}", revision
+            ):
+                identities.append((task_id, revision))
+                continue
+            self.error(
+                phase,
+                "SDD172",
+                f"Git phase review range cannot validate completed task `{task_id}` identity `{revision}` with VCS `{vcs}` because no deterministic task-identity adapter is available.",
+                "Record a clean full Git implementation commit for every completed task, or keep the phase non-complete until a deterministic adapter for the task identity is available.",
+                line,
+            )
+        return identities
+
+    def _phase_final_review(
+        self,
+        artifact: Artifact,
+        body: str,
+        line: int,
+        task_identities: Sequence[tuple[str, str]] = (),
+    ) -> None:
+        """Validate the durable, frozen all-lane review gate for phase closure."""
+        target_is_git = self._phase_review_identity_adapter_available(artifact, line)
+        value = markdown_scalar(evidence_value(body, "Final aligned review"))
+        parsed = parse_final_aligned_review(value)
+        if parsed is None:
+            self.error(
+                artifact,
+                "SDD166",
+                "Complete phase lacks a valid `Final aligned review` entry.",
+                "Use `- Final aligned review: <review artifact path>; frozen: <exact revision/range>`.",
+                line,
+            )
+            return
+        review_ref, frozen = parsed
+        review = self.resolve(review_ref)
+        if review is None or review.kind != "review":
+            self.error(
+                artifact,
+                "SDD166",
+                f"`Final aligned review` `{review_ref}` does not resolve to a review artifact.",
+                "Point it at the persisted final phase code-review artifact.",
+                line,
+            )
+            return
+        if review.meta.get("rev") != frozen:
+            self.error(
+                artifact,
+                "SDD168",
+                f"Final review `{review.rel}` frozen identity `{frozen}` does not exactly match its frontmatter `rev`.",
+                "Use the exact nonempty review `rev` after `frozen:` in the Final aligned review entry.",
+                line,
+            )
+        self._verify_phase_review_intent_digests(artifact, review, line)
+        if target_is_git:
+            self._verify_phase_review_identity(
+                artifact, body, frozen, line, task_identities
+            )
+        if not self._is_valid_phase_review(review, artifact):
+            self.error(
+                artifact,
+                "SDD167",
+                f"Final review `{review.rel}` is not a resolved, frozen Aligned phase review across all four lanes.",
+                "Record review_scope: phase, frozen: true, verdict: Aligned, the four stable lanes, and resolved status on a review of this phase.",
+                line,
+            )
+        if self._planning_root_scm() == "git":
+            self._verify_git_phase_review_committed(artifact, review, frozen, line)
+        if target_is_git:
+            identities = parse_git_frozen_identity(frozen)
+            if identities and all(git_commit_exists(self._repo_for_artifact(artifact), identity) for identity in identities):
+                self._verify_git_phase_post_review_state(artifact, review, identities[-1], line)
+
+    def _phase_review_identity_adapter_available(self, phase: Artifact, line: int) -> bool:
+        repository = self._repo_for_artifact(phase)
+        scm = detected_scm(repository)
+        if scm == "git":
+            return True
+        self.error(
+            phase,
+            "SDD172",
+            f"Phase review identity cannot be validated: target repository `{repository}` uses unsupported SCM adapter `{scm}`.",
+            "Keep the phase non-complete until a deterministic review-identity adapter for the target SCM is available.",
+            line,
+        )
+        return False
+
+    def _verify_phase_review_identity(
+        self,
+        phase: Artifact,
+        body: str,
+        frozen: str,
+        line: int,
+        task_identities: Sequence[tuple[str, str]] = (),
+    ) -> None:
+        """Git review-identity adapter for a frozen phase gate."""
+        repository = self._repo_for_artifact(phase)
+        checkpoint = markdown_scalar(evidence_value(body, "Revision / checkpoint"))
+        if not checkpoint or not re.fullmatch(r"[0-9a-fA-F]{40}", checkpoint):
+            self.error(
+                phase,
+                "SDD173",
+                "Git phase completion requires `Revision / checkpoint` to be one clean full 40-hex commit.",
+                "Record the exact full Git implementation commit as `Revision / checkpoint`; do not use a dirty or fallback identity.",
+                line,
+            )
+            return
+        identities = parse_git_frozen_identity(frozen)
+        if identities is None:
+            self.error(
+                phase,
+                "SDD173",
+                f"Git phase review identity `{frozen}` is not an exact `<full40>..<full40>` range.",
+                "Use an immutable full-commit range in both review `rev` and `frozen:`.",
+                line,
+            )
+            return
+        if identities[0] == identities[1]:
+            self.error(
+                phase,
+                "SDD173",
+                "Git phase review range has identical base and endpoint commits.",
+                "Use distinct full commits that bound the reviewed phase diff.",
+                line,
+            )
+            return
+        if identities[-1] != checkpoint:
+            self.error(
+                phase,
+                "SDD173",
+                f"Git phase review endpoint `{identities[-1]}` does not equal phase `Revision / checkpoint` `{checkpoint}`.",
+                "Review the final implementation commit or use a range whose endpoint is that exact checkpoint.",
+                line,
+            )
+        for identity in identities:
+            if not git_commit_exists(repository, identity):
+                self.error(
+                    phase,
+                    "SDD173",
+                    f"Git phase review identity commit `{identity}` does not exist in target repository `{repository}`.",
+                    "Use only full commits that exist in the target repository.",
+                    line,
+                )
+        if not all(git_commit_exists(repository, identity) for identity in identities):
+            return
+        ancestor = subprocess.run(
+            ["git", "-C", str(repository), "merge-base", "--is-ancestor", identities[0], identities[1]],
+            check=False,
+            capture_output=True,
+        )
+        if ancestor.returncode != 0:
+            self.error(
+                phase,
+                "SDD173",
+                f"Git phase review range base `{identities[0]}` is not an ancestor of endpoint `{identities[1]}`.",
+                "Use a forward reviewed range whose base is an ancestor of the phase checkpoint.",
+                line,
+            )
+            return
+        for task_id, revision in task_identities:
+            if not git_commit_exists(repository, revision):
+                self.error(
+                    phase,
+                    "SDD173",
+                    f"Completed task `{task_id}` implementation commit `{revision}` does not exist in target repository `{repository}`.",
+                    "Record an existing clean Git task implementation commit before completing the phase.",
+                    line,
+                )
+                continue
+            included_at_endpoint = subprocess.run(
+                ["git", "-C", str(repository), "merge-base", "--is-ancestor", revision, identities[1]],
+                check=False,
+                capture_output=True,
+            )
+            if included_at_endpoint.returncode != 0:
+                self.error(
+                    phase,
+                    "SDD173",
+                    f"Git phase review range `{frozen}` omits completed task `{task_id}` implementation commit `{revision}` because it is not an ancestor of the endpoint.",
+                    "Use a frozen range whose endpoint descends from every completed task implementation commit.",
+                    line,
+                )
+                continue
+            at_or_before_base = subprocess.run(
+                ["git", "-C", str(repository), "merge-base", "--is-ancestor", revision, identities[0]],
+                check=False,
+                capture_output=True,
+            )
+            if at_or_before_base.returncode == 0:
+                self.error(
+                    phase,
+                    "SDD173",
+                    f"Git phase review range `{frozen}` omits completed task `{task_id}` implementation commit `{revision}` because it is at or before the range base.",
+                    "Move the frozen range base before every completed task implementation commit.",
+                    line,
+                )
+
+    def _is_valid_phase_review(self, review: Artifact, phase: Artifact) -> bool:
+        return (
+            normalized(review.meta.get("review_of"))
+            in {normalized(phase.rel), normalized(phase.rel.removesuffix(".md"))}
+            and review.meta.get("review_scope") == "phase"
+            and review.meta.get("frozen") is True
+            and review.meta.get("verdict") == "Aligned"
+            and review.status == "resolved"
+            and isinstance(review.meta.get("rev"), str)
+            and bool(review.meta["rev"])
+            and not phase_review_schema_errors(review.meta)
+        )
+
+    def _verify_phase_review_intent_digests(
+        self, phase: Artifact, review: Artifact, line: int
+    ) -> None:
+        """Bind a phase gate to the current normalized phase and plan intent."""
+        plan_name = self._plan_name(phase)
+        plan = self.by_path.get(f"Plans/{plan_name}/README.md") if plan_name else None
+        if plan is None:
+            self.error(
+                phase,
+                "SDD174",
+                "Phase review cannot validate its plan README intent projection.",
+                "Ensure the reviewed phase belongs to a discoverable plan README before completing the phase.",
+                line,
+            )
+            return
+        for field, artifact, label in (
+            ("reviewed_phase_intent_sha256", phase, "phase"),
+            ("reviewed_plan_intent_sha256", plan, "plan README"),
+        ):
+            recorded = review.meta.get(field)
+            if not isinstance(recorded, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded):
+                continue
+            current = hashlib.sha256(project_artifact(artifact)).hexdigest()
+            if recorded != current:
+                self.error(
+                    phase,
+                    "SDD174",
+                    f"Final review `{review.rel}` {label} intent digest does not match the current canonical projection.",
+                    f"Rerun the four-lane review and record the current `{field}` after the reviewed intent is finalized.",
+                    line,
+                )
 
     def _plan_rollup(self, artifact: Artifact, phases: list[Any]) -> None:
         plan_evidence = self.sections(artifact).get("Plan Completion Evidence")
@@ -677,17 +952,27 @@ class Validator:
             return
         if pending:
             return
-        labels = ("Verified", "Repository", "VCS", "Revision / base", "Identity recheck")
+        labels = ("Verified", "Repository", "VCS", "Identity recheck")
         for label in labels:
             if not re.search(rf"^\s*-\s+{re.escape(label)}:\s*\S", body, re.MULTILINE):
                 self.error(artifact, "SDD071", f"`{name}` lacks `{label}`.", f"Add populated `{label}` evidence.", line)
+        if not (
+            re.search(r"^\s*-\s+Revision / checkpoint:\s*\S", body, re.MULTILINE)
+            or re.search(r"^\s*-\s+Revision / base:\s*\S", body, re.MULTILINE)
+        ):
+            self.error(artifact, "SDD071", f"`{name}` lacks `Revision / checkpoint`.", "Add populated native SCM revision/checkpoint evidence.", line)
         verified = markdown_scalar(evidence_value(body, "Verified"))
         if verified and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", verified):
             self.error(artifact, "SDD072", f"`{name}` has invalid verification date `{verified}`.", "Use YYYY-MM-DD.", line)
         vcs = markdown_scalar(evidence_value(body, "VCS")) or ""
         if vcs and vcs not in {"git", "git-worktree", "perforce", "none"}:
             self.error(artifact, "SDD072", f"`{name}` has invalid VCS `{vcs}`.", "Use git, git-worktree, perforce, or none.", line)
-        revision = markdown_scalar(evidence_value(body, "Revision / base")) or ""
+        revision = markdown_scalar(
+            evidence_value(body, "Revision / checkpoint") or evidence_value(body, "Revision / base")
+        ) or ""
+        task_match = re.fullmatch(r"Task\s+(\S+)\s+Completion Evidence", name)
+        if status == "complete" and task_match:
+            self._task_review_evidence(artifact, name, body, revision, vcs, line)
         if vcs in {"git", "git-worktree"} and revision and not re.fullmatch(r"[0-9a-fA-F]{40}(?:-dirty)?", revision):
             self.error(artifact, "SDD072", f"`{name}` has invalid Git revision/base `{revision}`.", "Record the full 40-digit revision, optionally followed by `-dirty`.", line)
         if vcs == "none" and revision and revision != "none":
@@ -778,6 +1063,157 @@ class Validator:
         if vcs in {"git", "git-worktree"} and revision and not revision.endswith("-dirty") and revision.lower() not in recheck.lower():
             self.error(artifact, "SDD075", f"`{name}` recheck does not name implementation revision `{revision}`.", "Record the exact tested commit in the identity-recheck procedure and result.", line)
 
+    def _task_review_evidence(self, artifact: Artifact, name: str, body: str, revision: str, vcs: str, line: int) -> None:
+        """Require a durable, auditable focused review for every complete task."""
+        focused_raw = evidence_value(body, "Focused review")
+        focused = markdown_scalar(focused_raw)
+        reviewed = markdown_scalar(evidence_value(body, "Reviewed candidate / final"))
+        result = markdown_scalar(evidence_value(body, "Review result"))
+        missing = [
+            label
+            for label, value in (
+                ("Focused review", focused),
+                ("Reviewed candidate / final", reviewed),
+                ("Review result", result),
+            )
+            if not value
+        ]
+        if missing:
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` lacks auditable focused task-review evidence: {', '.join(missing)}.",
+                "Record the focused complete-task diff review, its exact reviewed candidate/final identity or diff, and `Review result: PASS/Aligned`.",
+                line,
+            )
+            return
+        if not valid_focused_review_syntax(focused_raw):
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` focused review must contain an exact nonempty command/tool followed by the complete-task-diff statement.",
+                "Use `Focused review: `<exact command/tool>`; complete task diff reviewed for correctness, scope, tests, maintainability, and task boundary`.",
+                line,
+            )
+        if vcs in {"git", "git-worktree"} and revision and not revision.endswith("-dirty"):
+            self._valid_git_task_review_identity(artifact, name, focused, reviewed, revision, line)
+        elif reviewed != revision:
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` reviewed candidate/final `{reviewed}` does not exactly equal native `Revision / checkpoint` `{revision}`.",
+                "For this SCM, record the exact native revision/checkpoint reviewed; no deterministic alternate review-identity adapter is available.",
+                line,
+            )
+        if result != "PASS/Aligned":
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` review result `{result}` is not `PASS/Aligned`.",
+                "Record `- Review result: PASS/Aligned` only after the focused review passes.",
+                line,
+            )
+
+    def _valid_git_task_review_identity(self, artifact: Artifact, name: str, focused: str, reviewed: str, revision: str, line: int) -> bool:
+        """Validate clean-Git task review identity against the target repository."""
+        repository = self._repo_for_artifact(artifact)
+        if reviewed == revision:
+            identities = (reviewed,)
+            expected_review_identity = revision
+        else:
+            match = re.fullmatch(r"diff: ([0-9a-fA-F]{40})\.\.([0-9a-fA-F]{40})", reviewed)
+            if not match:
+                self.error(
+                    artifact,
+                    "SDD169",
+                    f"`{name}` reviewed candidate/final must be the exact clean Git task commit or `diff: <full40>..<full40>`.",
+                    "Record the full task commit, or a full-commit diff range ending at `Revision / checkpoint`.",
+                    line,
+                )
+                return False
+            identities = (match.group(1), match.group(2))
+            expected_review_identity = f"{identities[0]}..{identities[1]}"
+            if identities[0] == identities[1]:
+                self.error(
+                    artifact,
+                    "SDD169",
+                    f"`{name}` reviewed Git diff range has identical base and final commits.",
+                    "Use distinct full commits with the direct first parent of the task commit as base.",
+                    line,
+                )
+                return False
+            if identities[-1] != revision:
+                self.error(
+                    artifact,
+                    "SDD169",
+                    f"`{name}` reviewed Git diff endpoint `{identities[-1]}` does not equal `Revision / checkpoint` `{revision}`.",
+                    "Use a reviewed diff range whose exact endpoint is the task revision.",
+                    line,
+                )
+                return False
+        if not all(git_commit_exists(repository, identity) for identity in identities):
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` reviewed Git identity names a commit absent from target repository `{repository}`.",
+                "Use only full reviewed commits that exist in the target repository.",
+                line,
+            )
+            return False
+        parents = subprocess.run(
+            ["git", "-C", str(repository), "show", "-s", "--format=%P", revision],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if parents.returncode != 0 or len(parents.stdout.split()) > 1:
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` clean Git implementation revision `{revision}` is a merge commit.",
+                "Record a non-merge, independently bisectable task implementation commit and review its complete diff.",
+                line,
+            )
+            return False
+        if len(identities) == 2:
+            parent = subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", f"{revision}^"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if parent.returncode != 0 or parent.stdout.strip() != identities[0]:
+                self.error(
+                    artifact,
+                    "SDD169",
+                    f"`{name}` reviewed Git diff base `{identities[0]}` is not the direct first parent of task revision `{revision}`.",
+                    "Use `diff: <task revision first parent>..<task revision>` for a ranged focused review.",
+                    line,
+                )
+                return False
+        expected_command = (
+            f"git show {expected_review_identity}"
+            if len(identities) == 1
+            else f"git diff {expected_review_identity}"
+        )
+        recorded_command = focused
+        recorded = re.fullmatch(
+            r"`(?P<command>[^`;\n]+)`; complete task diff reviewed for correctness, scope, tests, maintainability, and task boundary",
+            focused,
+        )
+        if recorded:
+            recorded_command = recorded.group("command")
+        if recorded_command != expected_command:
+            self.error(
+                artifact,
+                "SDD169",
+                f"`{name}` focused review command must be `{expected_command}` for reviewed identity `{expected_review_identity}`.",
+                "For clean Git, use `git show <full task commit>` or `git diff <full base>..<full task commit>` with no extra operands.",
+                line,
+            )
+            return False
+        return True
+
     def _verify_clean_git_identity(self, artifact: Artifact, revision: str, name: str, line: int, compare_current: bool) -> None:
         repository = self._repo_for_artifact(artifact)
 
@@ -799,9 +1235,24 @@ class Validator:
             self.error(artifact, "SDD072", f"`{name}` implementation revision `{revision}` is not an ancestor of current HEAD.", "Check out a descendant containing the completed feature or use historical identity mode for an archival audit.", line)
 
     def _verify_evidence_committed(self, artifact: Artifact, name: str, body: str, line: int) -> None:
-        repository = git_root(artifact.path)
+        """Dispatch lifecycle durability checks by planning-root SCM adapter."""
+        scm = self._planning_root_scm()
+        if scm == "git":
+            self._verify_git_evidence_committed(artifact, name, body, line)
+            return
+        self.error(
+            artifact,
+            "SDD171",
+            f"`{name}` is complete but no validated durable lifecycle adapter is available for planning-root SCM `{scm}`.",
+            "Keep the entity non-complete until a validated durable lifecycle adapter is available.",
+            line,
+        )
+
+    def _verify_git_evidence_committed(self, artifact: Artifact, name: str, body: str, line: int) -> None:
+        """Git lifecycle adapter: require completion evidence at the current HEAD."""
+        repository = git_worktree_root(self.root)
         if repository is None:
-            self.error(artifact, "SDD072", f"`{name}` is complete but its planning artifact is not in a Git worktree.", "Commit the lifecycle/evidence artifact in its planning repository before finalizing completion.", line)
+            self.error(artifact, "SDD072", f"`{name}` is complete but the Git planning root is not a worktree.", "Use a Git worktree and commit the lifecycle/evidence artifact before finalizing completion.", line)
             return
         try:
             relative = artifact.path.resolve().relative_to(repository).as_posix()
@@ -894,6 +1345,171 @@ class Validator:
             return
         if no_comments(body).strip() != no_comments(committed_body).strip():
             self.error(artifact, "SDD072", f"`{name}` completion evidence differs from its committed section.", "Commit the populated evidence and lifecycle status in a scoped bookkeeping commit.", line)
+
+    def _verify_git_phase_review_committed(self, phase: Artifact, review: Artifact, frozen: str, line: int) -> None:
+        """Git phase-review adapter: the cited frozen review must be HEAD bytes."""
+        repository = git_worktree_root(self.root)
+        if repository is None:
+            self.error(phase, "SDD170", "Final aligned review cannot be checked because the Git planning root is not a worktree.", "Use a Git worktree and commit the phase review before phase completion.", line)
+            return
+        try:
+            relative = review.path.resolve().relative_to(repository).as_posix()
+        except ValueError:
+            self.error(phase, "SDD170", f"Final aligned review `{review.rel}` is outside the Git planning worktree.", "Store and commit the phase review in the planning root before phase completion.", line)
+            return
+        tracked = subprocess.run(
+            ["git", "-C", str(repository), "show", f"HEAD:{relative}"],
+            check=False,
+            capture_output=True,
+        )
+        if tracked.returncode != 0:
+            self.error(phase, "SDD170", f"Final aligned review `{review.rel}` is not committed at HEAD.", "Commit the exact final review artifact in the Git lifecycle record before phase completion.", line)
+            return
+        committed_source = tracked.stdout.decode("utf-8", errors="replace")
+        if committed_source != review.source:
+            self.error(phase, "SDD170", f"Final aligned review `{review.rel}` differs from its committed bytes at HEAD.", "Commit the exact reviewed artifact bytes, including its frontmatter, before phase completion.", line)
+            return
+        committed_meta = parse_frontmatter_source(committed_source)
+        if committed_meta is None:
+            self.error(phase, "SDD170", f"Committed final aligned review `{review.rel}` has malformed frontmatter.", "Commit a valid resolved frozen Aligned review artifact at HEAD.", line)
+            return
+        committed = Artifact(review.path, review.rel, committed_meta, review.body, committed_source, review.body_line)
+        if not self._is_valid_phase_review(committed, phase) or committed.meta.get("rev") != frozen:
+            self.error(phase, "SDD170", f"Committed final aligned review `{review.rel}` does not establish resolved frozen Aligned four-lane review state for `{frozen}`.", "Commit frontmatter with review_of, rev, review_scope: phase, frozen: true, verdict: Aligned, all four lanes, and status: resolved.", line)
+
+    def _verify_git_phase_post_review_state(self, phase: Artifact, review: Artifact, endpoint: str, line: int) -> None:
+        """Allow only explicit phase lifecycle records after a frozen Git review."""
+        repository = self._repo_for_artifact(phase)
+        target_root = git_worktree_root(repository)
+        if target_root is None:
+            self.error(phase, "SDD173", f"Git phase completion target `{repository}` is not a Git worktree.", "Use a target Git worktree for phase completion.", line)
+            return
+        status = subprocess.run(
+            ["git", "-C", str(target_root), "status", "--porcelain", "--ignore-submodules=none", "--untracked-files=all"],
+            check=False,
+            capture_output=True,
+        )
+        if status.returncode != 0 or status.stdout:
+            self.error(phase, "SDD173", "Git phase completion requires the current target worktree to be clean after review.", "Commit only permitted lifecycle records, remove uncommitted changes, and rerun the full phase review after material changes.", line)
+            return
+        head = subprocess.run(
+            ["git", "-C", str(target_root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode != 0:
+            self.error(phase, "SDD173", f"Git phase completion target `{target_root}` has no current HEAD.", "Use a target worktree with the reviewed endpoint checked into history.", line)
+            return
+        current = head.stdout.strip()
+        allowed = self._git_phase_lifecycle_paths(phase, review, target_root)
+        if not allowed:
+            if current != endpoint:
+                self.error(phase, "SDD173", "Phase lifecycle files are outside the target repository, so target HEAD must remain the reviewed endpoint.", "Keep target HEAD at the frozen review endpoint or rerun the full phase review after target changes.", line)
+            return
+        if current == endpoint:
+            return
+        descendant = subprocess.run(
+            ["git", "-C", str(target_root), "merge-base", "--is-ancestor", endpoint, "HEAD"],
+            check=False,
+            capture_output=True,
+        )
+        if descendant.returncode != 0:
+            self.error(phase, "SDD173", f"Reviewed endpoint `{endpoint}` is not an ancestor of current target HEAD.", "Check out a descendant of the reviewed endpoint or rerun the full phase review.", line)
+            return
+        commits = subprocess.run(
+            ["git", "-C", str(target_root), "rev-list", f"{endpoint}..HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if commits.returncode != 0:
+            self.error(phase, "SDD173", "Cannot inspect committed target changes after the frozen phase review.", "Repair the target Git worktree and rerun phase completion validation.", line)
+            return
+        paths: set[str] = set()
+        for commit in commits.stdout.splitlines():
+            changed = subprocess.run(
+                ["git", "-C", str(target_root), "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-m", "-z", commit],
+                check=False,
+                capture_output=True,
+            )
+            if changed.returncode != 0:
+                self.error(phase, "SDD173", "Cannot inspect every committed target change after the frozen phase review.", "Repair the target Git worktree and rerun phase completion validation.", line)
+                return
+            paths.update(value.decode("utf-8", errors="surrogateescape") for value in changed.stdout.split(b"\0") if value)
+        material = sorted(paths - allowed)
+        if material:
+            self.error(phase, "SDD173", f"Committed target paths changed after the frozen phase review are not lifecycle-only: {', '.join(material)}.", "Rerun the full phase review after source, test, configuration, or other material changes.", line)
+            return
+        for path, kind in self._git_phase_lifecycle_intent_paths(phase, target_root):
+            frozen_projection = self._git_artifact_projection(target_root, endpoint, path, kind)
+            current_projection = self._git_artifact_projection(target_root, "HEAD", path, kind)
+            if frozen_projection is None or current_projection is None:
+                self.error(phase, "SDD173", f"Cannot compare canonical {kind} intent for lifecycle path `{path}` across the frozen phase review.", "Keep the governing phase and plan artifacts valid and present at both the frozen endpoint and HEAD, or rerun the full phase review.", line)
+                return
+            if frozen_projection != current_projection:
+                self.error(phase, "SDD173", f"Lifecycle path `{path}` changes canonical {kind} intent after the frozen phase review.", "Do not change phase/plan scope, requirements, tasks, or acceptance text after review; rerun the full phase review.", line)
+                return
+
+    def _git_phase_lifecycle_intent_paths(self, phase: Artifact, target_root: Path) -> list[tuple[str, str]]:
+        """Return governed lifecycle artifacts whose intent must remain frozen."""
+        paths = [(phase.path, "phase")]
+        plan_name = self._plan_name(phase)
+        if plan_name:
+            paths.append((self.root / "Plans" / plan_name / "README.md", "plan"))
+        result: list[tuple[str, str]] = []
+        for path, kind in paths:
+            try:
+                result.append((path.resolve().relative_to(target_root).as_posix(), kind))
+            except ValueError:
+                pass
+        return result
+
+    def _git_artifact_projection(self, repository: Path, revision: str, relative: str, kind: str) -> bytes | None:
+        """Project a lifecycle artifact as stored at one immutable Git revision."""
+        source = subprocess.run(
+            ["git", "-C", str(repository), "show", f"{revision}:{relative}"],
+            check=False,
+            capture_output=True,
+        )
+        if source.returncode != 0:
+            return None
+        artifact = Artifact(repository / relative, relative, {"type": kind}, "", source.stdout.decode("utf-8", errors="replace"), 1)
+        try:
+            return project_artifact(artifact)
+        except StopIteration:
+            return None
+
+    def _git_phase_lifecycle_paths(self, phase: Artifact, review: Artifact, target_root: Path) -> set[str]:
+        """Return only the explicit phase lifecycle paths that live in this target."""
+        paths = [phase.path, review.path]
+        plan_name = self._plan_name(phase)
+        if plan_name:
+            paths.append(self.root / "Plans" / plan_name / "README.md")
+            for artifact in self.artifacts:
+                if artifact.kind == "debrief" and artifact.meta.get("plan") == plan_name and str(artifact.meta.get("phase")) == str(phase.meta.get("phase")):
+                    paths.append(artifact.path)
+        allowed: set[str] = set()
+        for path in paths:
+            try:
+                allowed.add(path.resolve().relative_to(target_root).as_posix())
+            except ValueError:
+                pass
+        if plan_name:
+            evidence_root = self.root / "Plans" / plan_name / "evidence"
+            try:
+                prefix = evidence_root.resolve().relative_to(target_root).as_posix().rstrip("/") + "/"
+            except ValueError:
+                prefix = ""
+            if prefix:
+                tracked = subprocess.run(
+                    ["git", "-C", str(target_root), "ls-files", "-z", "--", prefix],
+                    check=False,
+                    capture_output=True,
+                )
+                if tracked.returncode == 0:
+                    allowed.update(value.decode("utf-8", errors="surrogateescape") for value in tracked.stdout.split(b"\0") if value)
+        return allowed
 
     def _verify_capture_committed(self, artifact: Artifact, capture: str, name: str, line: int) -> None:
         target = self._capture_path(artifact, capture)
@@ -1085,6 +1701,14 @@ class Validator:
         if not isinstance(followups, list):
             self.error(artifact, "SDD082", "`followups` must be a list.", "Use `followups: []` when empty.")
             followups = []
+        if artifact.meta.get("review_scope") == "phase":
+            for issue in phase_review_schema_errors(artifact.meta):
+                self.error(
+                    artifact,
+                    "SDD167",
+                    f"Phase review frontmatter is invalid: {issue}.",
+                    "Set valid `review_mode` and exactly one PASS/Aligned lane_results entry with matching reviewed_identity and nonempty evidence for each stable lane.",
+                )
         statuses: dict[str, str] = {}
         resolution = self.sections(artifact).get("Resolution Log", (1, ""))[1]
         finding_ids: list[str] = []
@@ -1994,6 +2618,112 @@ def markdown_scalar(value: str | None) -> str | None:
     return result
 
 
+def parse_final_aligned_review(value: str | None) -> tuple[str, str] | None:
+    """Parse the deliberately narrow phase-review evidence syntax."""
+    if not value:
+        return None
+    match = re.fullmatch(r"(?P<path>[^;\s](?:[^;]*[^;\s])?); frozen: (?P<frozen>[^;\s](?:[^;]*[^;\s])?)", value)
+    if not match:
+        return None
+    path = markdown_scalar(match.group("path"))
+    frozen = markdown_scalar(match.group("frozen"))
+    return (path, frozen) if path and frozen else None
+
+
+def parse_git_frozen_identity(value: str) -> tuple[str, ...] | None:
+    """Accept only immutable full Git ranges for phase review gates."""
+    match = re.fullmatch(r"([0-9a-fA-F]{40})\.\.([0-9a-fA-F]{40})", value)
+    return (match.group(1), match.group(2)) if match else None
+
+
+def git_commit_exists(repository: Path, identity: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository), "cat-file", "-e", f"{identity}^{{commit}}"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def valid_focused_review_syntax(value: str | None) -> bool:
+    """Require a quoted exact review command/tool and the full task-diff claim."""
+    if not value:
+        return False
+    match = re.fullmatch(
+        r"`(?P<tool>[^`;\n]+?)`; complete task diff reviewed for correctness, scope, tests, maintainability, and task boundary",
+        value.strip(),
+    )
+    if not match:
+        return False
+    tool = match.group("tool").strip()
+    return bool(tool) and tool.lower() not in {
+        "review",
+        "code review",
+        "diff",
+    }
+
+
+def phase_review_schema_errors(meta: dict[str, Any]) -> list[str]:
+    """Return deterministic phase-gate frontmatter schema violations."""
+    expected = {
+        "review_plan_drift",
+        "review_quality",
+        "review_spec_compliance",
+        "review_blind_spots",
+    }
+    errors: list[str] = []
+    for field in ("reviewed_phase_intent_sha256", "reviewed_plan_intent_sha256"):
+        if not isinstance(meta.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", meta[field]):
+            errors.append(f"{field} must be a lowercase 64-hex SHA-256 digest")
+    if meta.get("review_mode") not in {"independent", "mixed", "single-agent"}:
+        errors.append("review_mode must be independent, mixed, or single-agent")
+    rows = meta.get("lane_results")
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        return [*errors, "lane_results must contain exactly four entries"]
+    lanes: list[str] = []
+    rev = meta.get("rev")
+    for row in rows:
+        if not isinstance(row, dict):
+            errors.append("each lane_results entry must be a mapping")
+            continue
+        lane = row.get("lane")
+        lanes.append(str(lane))
+        if row.get("result") != "PASS/Aligned":
+            errors.append(f"lane `{lane}` result must be PASS/Aligned")
+        if row.get("reviewed_identity") != rev:
+            errors.append(f"lane `{lane}` reviewed_identity must exactly equal rev")
+        evidence = row.get("evidence")
+        if not useful_lane_evidence(evidence):
+            errors.append(f"lane `{lane}` evidence must be a specific concrete observation")
+    if set(lanes) != expected or len(set(lanes)) != len(expected):
+        errors.append("lane_results must name each stable lane exactly once")
+    return errors
+
+
+def useful_lane_evidence(value: Any) -> bool:
+    """Reject blank and conclusory lane evidence without requiring copied output."""
+    if not isinstance(value, str):
+        return False
+    words = re.findall(r"[A-Za-z0-9_./:-]+", value)
+    normalized = " ".join(word.lower() for word in words)
+    if re.fullmatch(
+        r"(?:no|none|zero)(?: (?:blocking|material|significant|actionable|critical|major|minor))* "
+        r"(?:findings?|issues?|concerns?|problems?|defects?|regressions?)(?: (?:were|was))?"
+        r"(?: (?:found|identified|detected|observed))?",
+        normalized,
+    ):
+        return False
+    generic = {
+        "a", "an", "and", "aligned", "boundary", "boundaries", "case", "cases",
+        "code", "edge", "ok", "pass", "passed", "plan", "quality", "requirement",
+        "requirements", "review", "scope", "success", "successful", "successfully", "task",
+    }
+    return len(words) >= 3 and any(word.strip(".,:;!?").lower() not in generic for word in words)
+
+
 def evidence_rows(body: str) -> list[tuple[str, tuple[str, str, str, str]]]:
     rows: list[tuple[str, tuple[str, str, str, str]]] = []
     active: str | None = None
@@ -2465,6 +3195,38 @@ def git_root(start: Path) -> Path | None:
         if current.parent == current:
             return None
         current = current.parent
+
+
+def git_worktree_root(start: Path) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(start), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return Path(value).resolve() if value else None
+
+
+def detected_scm(root: Path) -> str:
+    """Detect only lifecycle transports for which the validator has adapters."""
+    if git_worktree_root(root) is not None:
+        return "git"
+    try:
+        info = subprocess.run(
+            ["p4", "-d", str(root), "info"], check=False, capture_output=True
+        )
+        mapped = subprocess.run(
+            ["p4", "-d", str(root), "where", "//..."], check=False, capture_output=True
+        )
+    except OSError:
+        return "none"
+    return "perforce" if info.returncode == 0 and bool(mapped.stdout.strip()) else "none"
 
 
 def resolve_roots(start: Path, explicit: str | None) -> tuple[Path, Path]:

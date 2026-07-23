@@ -26,13 +26,31 @@ Tasks, phases, and plans carry durable completion-evidence sections recording
 the exact commands, tools, context, revision, and observed results used to
 justify each `complete` transition (D-0005).
 
-Plan tasks are implementation commit boundaries: each task describes one clean,
-complete, independently bisectable feature slice, while subtasks remain steps
-inside that boundary (D-0012). In normal Git execution, `sdd-implement` verifies
-and commits that slice before recording evidence against the immutable feature
+Plan tasks are the smallest complete dependency-ordered native SCM
+revision/checkpoint boundaries: each is a clean, cohesive, independently
+bisectable feature or internal capability, while subtasks remain mechanical
+steps inside it (D-0014, D-0015). Every completed task receives a focused review
+of its complete diff before its revision is finalized, and lifecycle recording
+preserves its complete state. **Git adapter:** `sdd-implement` verifies and
+commits that slice before recording evidence against the immutable feature
 commit, then commits lifecycle bookkeeping separately. Dirty snapshots and
 content-object evidence folders are fallback identity mechanisms, not a reason
 to leave ordinary completed implementation uncommitted (D-0011).
+
+Phase completion freezes a concrete revision/range and requires a persisted
+`Aligned` run of all four `sdd-code-review` lanes. Needs changes or Blocked
+prevents completion; every material review-driven change gets a new planned
+task id and complete task revision, even when small, then a fresh full review
+until the final phase state is materially unchanged (D-0014).
+
+Completed Git task evidence records `git show <full40>` for final-commit review
+or `git diff <full40>..<full40>` for range review of the complete task diff, its
+exact reviewed candidate/final native SCM identity or diff, and a
+`PASS/Aligned` result. Final phase-review evidence uses `- Final aligned review:
+<artifact path>; frozen: <exact rev>`, with exact equality to the review's
+frontmatter `rev`. **Git lifecycle adapter:** the cited review artifact must be
+committed at planning-root `HEAD`; Perforce and no-SCM planning roots currently
+have no validated durable lifecycle adapter and must leave entities non-complete.
 
 The compact core exposes: `sdd-setup`, `sdd-research`, `sdd-brainstorm`,
 `sdd-specify`, `sdd-design`, `sdd-plan`, `sdd-implement`, `sdd-code-review`,
@@ -49,9 +67,3 @@ Decision-ledger writes additionally run
 `scripts/sdd_decision_validate.py <ledger>`, a focused read-only validator for
 ledger format, archives, entry types and ids, supersession integrity,
 structural collision candidates, and accepted-entry immutability (D-0010).
-
-After plan approval, the `sdd-plan` skill conditionally hands the approved artifact to
-the independently installed `sdd-beads-publish` skill when that skill is
-available. The integration is capability-detected: `sdd-planner` has no hard
-dependency on Beads or the `sdd-beads` plugin, and an unavailable Beads
-workspace leaves the approved SDD plan unchanged.

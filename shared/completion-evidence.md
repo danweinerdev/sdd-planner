@@ -27,8 +27,8 @@ Before setting a task to `complete`, replace the pending marker with:
 - Verified: YYYY-MM-DD
 - Repository: `<repository root>`
 - VCS: `git | git-worktree | perforce | none`
-- Revision / base: `<exact tested implementation commit>`, `<Git base>-dirty`, `<Perforce have digest>`, or `none`
-- Identity recheck: `<exact command/tool, timestamp, and matching revision/digest>`
+- Revision / checkpoint: `<exact tested native SCM revision/checkpoint>`, `<Git base>-dirty`, `<Perforce have digest>`, or `none`
+- Identity recheck: `<exact command/tool, timestamp, and matching revision/checkpoint/digest>`
 
 <!-- Fallback identity only: add Evidence exclusions, Governing intent,
 Ignored inputs, Directory inputs, and Content snapshot as defined below. -->
@@ -42,6 +42,15 @@ Ignored inputs, Directory inputs, and Content snapshot as defined below. -->
 | `<tool and version, or exact non-command procedure>` | `<paths/environment>` | PASS | `<specific observation>` |
 ```
 
+Every completed task also includes these exact review-evidence labels before
+its tables:
+
+```markdown
+- Focused review: `git show <full40>` or `git diff <full40>..<full40>`; complete task diff reviewed for correctness, scope, tests, maintainability, and task boundary
+- Reviewed candidate / final: `<exact Revision / checkpoint identity>`
+- Review result: PASS/Aligned
+```
+
 Rules:
 
 1. Record the exact command, not “tests passed” or a paraphrased tool name.
@@ -49,10 +58,10 @@ Rules:
 3. Record the observable result that satisfies the task's prospective
    `verification`; test counts alone are insufficient when named behaviors were
    required.
-4. Record the tested source identity using the canonical procedure below. In a
-   commit-capable Git workflow this is the focused implementation commit, not a
-   dirty base or the later lifecycle commit. A changed-path list, ordinary text
-   patch, or revision without the identity recheck is not reproducible evidence.
+4. Record the tested source identity using the canonical procedure below. This
+   is the focused native SCM revision/checkpoint, not a mutable working state or
+   later lifecycle record. A changed-path list, ordinary text patch, or revision
+   without the identity recheck is not reproducible evidence.
 5. Name non-command tools and procedures precisely, including version when it
    affects reproducibility, plus the inspected paths/environment and observed
    result.
@@ -62,42 +71,70 @@ Rules:
 7. A final required check that failed means the task is not complete. Preserve
    failure output verbatim in the session report or linked durable artifact;
    never rewrite failure as passing evidence.
+8. The focused-review record is retrospective evidence of the **complete task
+     diff**, not a reference to a later phase gate. For a clean Git, its command
+     is exactly `git show <full task commit>` for final-commit review or `git
+     diff <full base>..<full task commit>` for range review, before the required
+     semicolon statement. For a clean Git
+    task, `Reviewed candidate / final` is exactly the full task commit or
+    `diff: <full40>..<full40>`; both commits must exist in the target repository,
+    range endpoints must differ, the base must be the final task commit's direct
+    first parent, and the range endpoint must exactly equal `Revision / checkpoint`.
+     The exact backticked command uses that same full commit or range with no
+     extra operands. Other SCMs
+    record the exact native revision/checkpoint; no unsupported adapter may claim
+    to validate an alternate diff identity. A task cannot become `complete`
+    without this auditable `PASS/Aligned` result.
 
-## Normal Git completion: commit first
+## Native SCM completion
 
-For Git repositories where commits are authorized, each plan task is one clean,
-complete, independently bisectable feature slice (D-0011, D-0012):
+Each plan task is one clean, complete, independently bisectable feature or
+internal-capability slice (D-0014, D-0015):
 
 1. Implement the task and its tests without mixing another feature slice.
-2. Run the required verification and review the exact diff.
-3. Commit the implementation as one scoped feature commit. Subtasks are steps
-   within this boundary; they are not incomplete intermediate commits. The
-   committed tree must contain a complete behavior or coherent internal
-   capability, keep the repository buildable/testable, and be safe for `git
-   bisect` to land on.
-4. Confirm the implementation commit contains the exact tested bytes and record
-   its full revision as `Revision / base`. The commit itself is the durable
-   source identity; do not create a snapshot manifest, content-object directory,
-   governing-intent projection, or `evidence/` folder for this normal path.
-5. Populate completion evidence and lifecycle status, then make a separate
-   scoped lifecycle commit containing only the plan/evidence bookkeeping. This
-   avoids the impossible requirement for a commit to contain its own SHA. The
-   evidence continues to identify the tested implementation commit, not the
-   later lifecycle commit.
+2. Run the required verification and focused code review of the complete diff
+   before finalizing the task revision/checkpoint.
+3. Record the implementation as one scoped native SCM revision/checkpoint.
+   Subtasks are steps within this boundary; they are not incomplete intermediate
+   revisions. The recorded state must contain a complete behavior or coherent
+   internal capability and keep the repository buildable/testable.
+4. Confirm the native revision/checkpoint contains the exact tested bytes and
+   record its full identity as `Revision / checkpoint`. It is the durable source
+   identity; do not create a fallback capture merely because lifecycle evidence
+   has not yet been written.
+5. Populate completion evidence and lifecycle status, then record the complete
+   planning artifact through its approved durable SCM lifecycle transport. The
+   lifecycle record preserves complete task state while evidence continues to
+   identify the tested implementation revision/checkpoint.
 
-The completion transition is finalized only after both scoped commits exist and
-the populated planning artifact is committed. The planning root must therefore
-be a Git worktree for every completion mode, including fallback source identity.
-If it is not, snapshotting may preserve a handoff state but the entity remains
-non-complete until an approved durable lifecycle transport is established. No
+The completion transition is finalized only after both the implementation and
+lifecycle identities exist. A planning root without approved durable lifecycle
+transport may preserve a handoff state but the entity remains non-complete. No
 transport may leave completed implementation dirty or replace an authorized
-feature commit with a content snapshot.
+native revision/checkpoint with a content snapshot.
+
+Durability validation dispatches by the detected **planning-root SCM**, not by
+a universal Git assumption. The Git adapter below is currently the only
+validated durable lifecycle adapter. Perforce and no-SCM planning roots have no
+validated durable lifecycle adapter yet: they may retain handoff evidence, but
+tasks, phases, and plans must remain non-complete rather than claiming durable
+lifecycle completion.
+
+### Git adapter: commit first
+
+For Git repositories where commits are authorized, the native SCM revision in
+step 3 is one scoped implementation commit (D-0011, D-0016, D-0017). Confirm the
+implementation commit contains the exact tested bytes and record its full hash
+as `Revision / checkpoint`. Then make a separate scoped lifecycle commit
+containing only plan/evidence bookkeeping; this avoids a self-referential SHA.
+Normal Git completion creates no snapshot manifest, content-object directory,
+governing-intent projection, or `evidence/` folder.
 
 ## Fallback source identity
 
 Dirty Git, Perforce, and no-VCS snapshots are compatibility mechanisms for
-workspaces where a normal implementation commit is genuinely unavailable or
-not authorized. They are not a reason to postpone an authorized Git commit.
+workspaces where a normal native revision/checkpoint is genuinely unavailable
+or not authorized. They are not a reason to postpone an authorized Git commit.
 Record the constraint or authorization that selected the fallback. A routine
 in-progress Git task must stay non-complete rather than generating a snapshot
 merely because evidence has not been written yet.
@@ -120,7 +157,7 @@ identity; fallback identity also includes its governing-intent digest. A Git
 bare repository is unsupported: operate in a worktree. Do not
 improvise an identity for an unrecognized VCS.
 
-For normal commit-backed Git evidence, the full tested implementation revision
+For normal Git commit-backed evidence, the full tested implementation revision
 and immediate commit/tree identity recheck are sufficient. The planning
 artifact itself must be tracked and committed in its lifecycle commit. Later
 feature commits do not make earlier task evidence stale: the recorded commit is
@@ -256,9 +293,9 @@ content digests, and durable captures.
 Capture fallback identity immediately after the recorded verification commands.
 After writing evidence, recompute it with the same base and exclusions
 immediately before each task/phase/plan status transition. Record the exact
-recheck command or tool, timestamp, and matching revision/digest. Before a
-Beads closure, recompute it again. Any non-excluded difference from the tested
-identity makes the evidence stale and forbids completion or closure.
+recheck command or tool, timestamp, and matching revision/digest. Any
+non-excluded difference from the tested identity makes the evidence stale and
+forbids completion or closure.
 
 ## Phase evidence
 
@@ -273,6 +310,10 @@ Before setting a phase to `complete`, replace `Pending — not complete.` under
   fallback snapshot;
 - a rollup of every task id that repeats its populated `### Completion
   Evidence` section verbatim under `### Task <id> Evidence Rollup`;
+- `Final aligned review`: `<persisted review artifact path>; frozen:
+  <revision/range>` for a run of all four `sdd-code-review` lanes against the
+  concrete phase state; its verdict must be `Aligned` and it must be the last
+  material code state reviewed;
 - exact phase-level commands/tools and results when the phase acceptance
   criteria require integration or aggregate checks; and
 - either those aggregate checks or an explicit statement that no additional
@@ -280,8 +321,14 @@ Before setting a phase to `complete`, replace `Pending — not complete.` under
   phase acceptance criterion.
 
 All phase acceptance-criteria checkboxes and tasks must be complete first. Every
-required phase-level check must pass; a failed or unrun aggregate check forbids
-phase completion.
+required phase-level check must pass. A `Needs changes` or `Blocked` phase-gate
+review forbids phase completion. Every review-driven material fix receives a
+new planned task id and is implemented as a complete reviewable task revision,
+even when it is small, then requires a fresh frozen four-lane review.
+Any material code change after review — behavior, public contract, architecture,
+security, concurrency, persistence, error handling, acceptance coverage, or
+meaningful test logic — invalidates that review. Repeat until `Aligned` and
+materially unchanged.
 
 ## Plan evidence
 

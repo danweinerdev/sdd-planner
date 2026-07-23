@@ -57,18 +57,21 @@ External dependencies, prerequisites, and assumptions.
 
 ## Plan Completion Evidence
 
-<!-- Keep the exact `Pending — not complete.` line until completion. Normal
-commit-backed Git evidence uses the exact labels `Verified`, `Repository`,
-`VCS`, `Revision / base`, and `Identity recheck`, each as `- <label>: <value>`.
+<!-- Keep the exact `Pending — not complete.` line until completion. Evidence
+uses the exact labels `Verified`, `Repository`, `VCS`, `Revision / checkpoint`,
+and `Identity recheck`, each as `- <label>: <value>`.
 `Verified` is `YYYY-MM-DD`; `Repository` is the exact resolved target root;
-`VCS` is `git`, `git-worktree`, `perforce`, or `none`; Git `Revision / base` is
-a full 40-hex tested implementation commit. Commit implementation before
-recording evidence, then commit only lifecycle/evidence bookkeeping separately;
-normal Git completion creates no snapshot, projection, content-object, or
-`evidence/` folder. Only fallback dirty Git, Perforce, or no-VCS identity adds
+`VCS` is `git`, `git-worktree`, `perforce`, or `none`; record the tested native
+SCM revision/checkpoint. Git adapter: `Revision / checkpoint` is a full 40-hex
+implementation commit; commit implementation before recording evidence, then
+commit only lifecycle/evidence bookkeeping separately. Normal Git completion
+creates no snapshot, projection, content-object, or `evidence/` folder. Only
+fallback dirty Git, Perforce, or no-VCS identity adds
 `Fallback reason`, `Evidence exclusions`, `Governing intent`, `Ignored inputs`,
 `Directory inputs`, and `Content snapshot`; dirty Git uses a full base suffixed
 `-dirty`. `Fallback reason` names the specific VCS or authorization constraint.
+Perforce and no-SCM planning roots may retain fallback handoff evidence but have
+no validated durable lifecycle adapter, so they must remain non-complete.
 `Governing intent` uses `<64-hex SHA-256> at <durable path>; inputs:
 <comma-separated artifact paths and decision ids>`. The fallback
 `Ignored inputs` and `Directory inputs` use `none with <inspection basis>` or

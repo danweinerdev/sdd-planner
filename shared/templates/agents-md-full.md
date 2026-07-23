@@ -24,13 +24,15 @@ This repository keeps spec-driven development artifacts under `{{PLANNING_ROOT}}
 - Artifact metadata lives in YAML frontmatter. Status values are the source of truth.
 - Plans stay under `Plans/<PlanName>/`; never move them to express lifecycle state.
 - A phase owns task status and subtask checkboxes. Update them only after actual verification.
-- Plan each task as one clean, complete, independently bisectable feature
-  commit; subtasks are implementation steps inside that boundary, not presumed
-  incomplete commits.
+- Plan each task as one clean, complete, independently bisectable native SCM
+  revision/checkpoint; subtasks are mechanical implementation steps inside that
+  boundary, not presumed incomplete revisions. Review each complete task diff
+  before finalizing its revision and preserve its complete state in lifecycle
+  recording. **Git adapter:** this revision is a focused implementation commit.
 - Every task, phase, and plan has a completion-evidence section. Record exact
-  commands/tools, context, revision, result, and observable evidence before any
-  `complete` transition; prospective verification criteria are not proof. In
-  normal Git execution, commit the verified feature slice first and commit the
+  commands/tools, context, revision/checkpoint, result, and observable evidence
+  before any `complete` transition; prospective verification criteria are not
+  proof. **Git adapter:** commit the verified feature slice first and commit the
   lifecycle/evidence bookkeeping separately; do not generate dirty snapshot
   folders merely because bookkeeping is still pending.
 - Use `planning-config.json` to resolve the planning root and any externally targeted repository paths. There is no local companion config.
@@ -44,4 +46,4 @@ The normal progression is: `sdd-setup` -> `sdd-research` -> `sdd-brainstorm` -> 
 
 ## Review And Execution
 
-Before implementation, confirm an approved plan has concrete verification criteria. During implementation, record command output for checks actually run. Use the `sdd-code-review` skill before phase completion or merge when material code changed. For project-specific review requirements, keep a short trusted review brief in this `AGENTS.md`; do not rely on auto-discovered agent files.
+Before implementation, confirm an approved plan has concrete verification criteria. During implementation, record command output for checks actually run. Before phase completion, freeze a concrete phase revision/range, persist an `Aligned` review from all four `sdd-code-review` lanes, and rerun all four after any material code change. For project-specific review requirements, keep a short trusted review brief in this `AGENTS.md`; do not rely on auto-discovered agent files.
