@@ -15,7 +15,7 @@ available. Runtime adapters may select a worker without the skill requesting an
 agent or model, and the primary-agent fallback remains transparent (D-0009).
 
 - **OpenCode**: point a skills discovery path at this repository (for example `ln -s <this-repo> ~/.agents`, so the skills resolve as `~/.agents/skills/<name>/SKILL.md`), or mount it there in a container.
-- **Codex**: install via the `codex-marketplace` repository, then install `codex-sdd-planner` from it. Start a new thread after installation so the skills are available.
+- **Codex**: install via the `codex-marketplace` repository, then install `sdd-planner` from it. Start a new thread after installation so the skills are available.
 - Any other runtime that loads the `.agents/skills` convention or directory-sourced skills works the same way.
 
 Ask your agent for a workflow naturally: "set up spec-driven planning in this repository", "write a specification for this feature", or "review this implementation against the active plan."
