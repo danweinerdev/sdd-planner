@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import subprocess
 import sys
@@ -182,6 +181,136 @@ class ValidatorTests(unittest.TestCase):
             text=True,
         ).stdout.strip()
 
+    def complete_phase_and_plan(self, root: Path) -> tuple[str, str]:
+        """Create a fully durable one-task phase and plan lifecycle fixture."""
+        base = self.commit_all(root)
+        (root / "implementation.txt").write_text("complete\n", encoding="utf-8")
+        subprocess.run(["git", "add", "implementation.txt"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "implement feature"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        checkpoint = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        task_evidence = f"""- Verified: 2026-07-24
+- Repository: `{root}`
+- VCS: `git`
+- Revision / checkpoint: `{checkpoint}`
+- Identity recheck: `git show {checkpoint}`, 2026-07-24T12:00:00Z, matched commit
+- Focused review: `git show {checkpoint}`; complete task diff reviewed for correctness, scope, tests, maintainability, and task boundary
+- Reviewed candidate / final: `{checkpoint}`
+- Review result: PASS/Aligned
+
+| Command | Working directory | Result | Observable evidence |
+|---|---|---|---|
+| `python3 -m unittest` | `{root}` | PASS (exit 0) | Task behavior passed. |"""
+        phase_evidence = f"""- Verified: 2026-07-24
+- Repository: `{root}`
+- VCS: `git`
+- Revision / checkpoint: `{checkpoint}`
+- Identity recheck: `git show {checkpoint}`, 2026-07-24T12:00:00Z, matched commit
+- Final aligned review: Plans/Feature/reviews/01-final.md; frozen: {base}..{checkpoint}
+
+| Command | Working directory | Result | Observable evidence |
+|---|---|---|---|
+| `python3 -m unittest` | `{root}` | PASS (exit 0) | Aggregate phase checks passed after task verification. |
+
+### Completed task identities
+- `1.1`: `{checkpoint}`"""
+        phase = phase_document(task_status="complete")
+        phase = phase.replace("status: planned", "status: complete", 1)
+        phase = phase.replace("- [ ] Implement it.", "- [x] Implement it.")
+        phase = phase.replace("- [ ] AC-01", "- [x] AC-01")
+        phase = phase.replace(
+            "Pending — not complete.", task_evidence.replace("\n", "\n        "), 1
+        )
+        phase = phase.replace(
+            "Pending — not complete.", phase_evidence.replace("\n", "\n        "), 1
+        )
+        write(root, "Plans/Feature/01-Build.md", phase)
+        write(root, "Plans/Feature/README.md", plan_document(phase_status="complete"))
+        review = f"""
+            ---
+            title: Final phase review
+            type: review
+            status: resolved
+            created: 2026-07-24
+            updated: 2026-07-24
+            tags: [review]
+            related: [Plans/Feature/01-Build.md]
+            review_of: Plans/Feature/01-Build.md
+            rev: {base}..{checkpoint}
+            review_scope: phase
+            frozen: true
+            verdict: Aligned
+            reviewed_planning_revision: {base}
+            review_mode: independent
+            lane_results:
+              - lane: review_plan_drift
+                result: PASS/Aligned
+                reviewed_identity: {base}..{checkpoint}
+                evidence: Phase checklist matched task completion evidence.
+              - lane: review_quality
+                result: PASS/Aligned
+                reviewed_identity: {base}..{checkpoint}
+                evidence: Implementation error paths were inspected.
+              - lane: review_spec_compliance
+                result: PASS/Aligned
+                reviewed_identity: {base}..{checkpoint}
+                evidence: AC-01 behavior matched the implementation diff.
+              - lane: review_blind_spots
+                result: PASS/Aligned
+                reviewed_identity: {base}..{checkpoint}
+                evidence: Empty input behavior was inspected.
+            findings: []
+            followups: []
+            ---
+            # Final phase review
+            ## Findings
+            ## Resolution Log
+        """
+        write(root, "Plans/Feature/reviews/01-final.md", review)
+        subprocess.run(
+            ["git", "add", "Plans/Feature/01-Build.md", "Plans/Feature/README.md", "Plans/Feature/reviews/01-final.md"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "complete phase lifecycle"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        plan_evidence = f"""- Verified: 2026-07-24
+- Repository: `{root}`
+- VCS: `git`
+- Revision / checkpoint: `{checkpoint}`
+- Identity recheck: `git show {checkpoint}`, 2026-07-24T12:00:00Z, matched commit
+
+| Command | Working directory | Result | Observable evidence |
+|---|---|---|---|
+| `python3 -m unittest` | `{root}` | PASS (exit 0) | Aggregate plan checks passed after phase closure. |
+
+### Completed phase identities
+- `1`: `{checkpoint}`; review: `Plans/Feature/reviews/01-final.md`"""
+        plan = plan_document(phase_status="complete").replace("status: active", "status: complete", 1)
+        write(
+            root,
+            "Plans/Feature/README.md",
+            plan.replace("Pending — not complete.", plan_evidence.replace("\n", "\n        ")),
+        )
+        subprocess.run(["git", "add", "Plans/Feature/README.md"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "complete plan lifecycle"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        return base, checkpoint
+
     def test_valid_artifact_graph(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -236,14 +365,18 @@ class ValidatorTests(unittest.TestCase):
                 "Repository",
                 "VCS",
                 "Revision / checkpoint",
+                "Identity recheck",
+            ):
+                self.assertIn(f"`{label}`", evidence_template)
+            for removed in (
                 "Evidence exclusions",
                 "Governing intent",
                 "Ignored inputs",
                 "Directory inputs",
-                "Identity recheck",
                 "Fallback reason",
+                "Content snapshot",
             ):
-                self.assertIn(f"`{label}`", evidence_template)
+                self.assertNotIn(f"`{removed}`", evidence_template)
             self.assertIn(
                 "`Command | Working directory | Result | Observable evidence`",
                 evidence_template,
@@ -253,6 +386,38 @@ class ValidatorTests(unittest.TestCase):
                 evidence_template,
             )
             self.assertIn("`PASS (exit 0)`", evidence_template)
+            self.assertIn("may be a validated integration merge", evidence_template)
+            self.assertIn(
+                "non-merge rule applies only to atomic task implementation evidence",
+                evidence_template,
+            )
+
+    def test_validate_skill_retains_semantic_process_contract_with_native_scm_evidence(self) -> None:
+        skill = (PLUGIN_ROOT / "skills" / "sdd-validate" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        for section in (
+            "## Scope",
+            "### Structure and frontmatter",
+            "### Hierarchy, dependencies, and traceability",
+            "### Review artifacts",
+            "### Completion evidence",
+            "### Decision ledger",
+            "## Output",
+        ):
+            self.assertIn(section, skill)
+        for requirement in (
+            "cross-artifact semantic reconciliation",
+            "Actively test the unhappy paths",
+            "related` graph",
+            "Review supersession links are bidirectional",
+            "Complete parent entities contain no incomplete child entity",
+            "files and checks inspected",
+            "sole durable source identity",
+            "Never use snapshots, content-object stores, custom intent hashes",
+            "checkpoint identities, not child-evidence rollups",
+        ):
+            self.assertIn(requirement, skill)
 
     def test_plan_phase_docs_require_type_backlink_and_matching_title(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -365,34 +530,6 @@ class ValidatorTests(unittest.TestCase):
             write(root, "Specs/Feature/README.md", draft)
             self.assertNotIn("SDD153", {item.code for item in self.validate(root)})
 
-    def test_complete_phase_requires_verbatim_task_evidence_rollup(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.make_valid_tree(root)
-            task_evidence = "Task proof with exact output."
-            phase = phase_document(task_status="complete")
-            phase = phase.replace("status: planned", "status: complete", 1)
-            phase = phase.replace("- [ ] Implement it.", "- [x] Implement it.")
-            phase = phase.replace("- [ ] AC-01", "- [x] AC-01")
-            phase = phase.replace("Pending — not complete.", task_evidence, 1)
-            phase = phase.replace("Pending — not complete.", "Task 1.1 omitted.", 1)
-            write(root, "Plans/Feature/01-Build.md", phase)
-            write(root, "Plans/Feature/README.md", plan_document(phase_status="complete"))
-            self.assertIn("SDD157", {item.code for item in self.validate(root)})
-
-            phase = phase.replace(
-                "Task 1.1 omitted.",
-                f"### Task 1.1 Evidence Rollup\n        {task_evidence}",
-            )
-            write(root, "Plans/Feature/01-Build.md", phase)
-            codes = {item.code for item in self.validate(root)}
-            self.assertNotIn("SDD157", codes)
-            self.assertNotIn("SDD020", codes)
-
-            duplicate = phase + f"\n        ### Task 1.1 Evidence Rollup\n        {task_evidence}\n"
-            write(root, "Plans/Feature/01-Build.md", duplicate)
-            self.assertIn("SDD157", {item.code for item in self.validate(root)})
-
     def test_complete_phase_requires_final_aligned_review_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -429,8 +566,7 @@ class ValidatorTests(unittest.TestCase):
                 review_scope: phase
                 frozen: true
                 verdict: Aligned
-                reviewed_phase_intent_sha256: {'a' * 64}
-                reviewed_plan_intent_sha256: {'b' * 64}
+                reviewed_planning_revision: {'a' * 40}
                 review_mode: independent
                 lane_results:
                   - lane: review_plan_drift
@@ -744,97 +880,6 @@ class ValidatorTests(unittest.TestCase):
             )
             self.assertNotIn("SDD173", {item.code for item in validator.out})
 
-    def test_phase_review_lane_results_are_complete_and_auditable(self) -> None:
-        revision = "b" * 40
-        meta = {
-            "rev": revision,
-            "reviewed_phase_intent_sha256": "a" * 64,
-            "reviewed_plan_intent_sha256": "b" * 64,
-            "review_mode": "independent",
-            "lane_results": [
-                {"lane": "review_plan_drift", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Task boundaries compared against phase checklist."},
-                {"lane": "review_quality", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Changed implementation paths were inspected."},
-                {"lane": "review_spec_compliance", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Acceptance criteria were compared to implementation."},
-                {"lane": "review_blind_spots", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Edge cases inspected."},
-            ],
-        }
-        self.assertEqual([], sdd_validate.phase_review_schema_errors(meta))
-
-        invalid = dict(meta)
-        invalid["lane_results"] = [dict(row) for row in meta["lane_results"]]
-        invalid["lane_results"][3]["lane"] = "review_quality"
-        invalid["lane_results"][0]["evidence"] = ""
-        invalid["lane_results"][1]["reviewed_identity"] = "other"
-        invalid["lane_results"][2]["result"] = "PASS"
-        self.assertTrue(sdd_validate.phase_review_schema_errors(invalid))
-
-        invalid = dict(meta)
-        invalid["lane_results"] = [dict(row) for row in meta["lane_results"]]
-        invalid["lane_results"][0]["evidence"] = "passed"
-        self.assertTrue(sdd_validate.phase_review_schema_errors(invalid))
-
-        invalid["lane_results"][0]["evidence"] = "Code quality review passed."
-        self.assertTrue(sdd_validate.phase_review_schema_errors(invalid))
-
-        invalid = dict(meta)
-        invalid["lane_results"] = [dict(row) for row in meta["lane_results"]]
-        for evidence in (
-            "No findings",
-            "No blocking findings",
-            "No blocking issues found",
-            "None material concerns detected",
-        ):
-            invalid["lane_results"][0]["evidence"] = evidence
-            self.assertTrue(sdd_validate.phase_review_schema_errors(invalid), evidence)
-
-    def test_phase_review_intent_digests_allow_lifecycle_changes_and_reject_intent_drift(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            planning_root = Path(directory) / "planning"
-            target_repository = Path(directory) / "target"
-            planning_root.mkdir()
-            target_repository.mkdir()
-            self.make_valid_tree(planning_root)
-            validator = sdd_validate.Validator(planning_root, target_repository)
-            validator._discover()
-            phase = validator.by_path["Plans/Feature/01-Build.md"]
-            plan = validator.by_path["Plans/Feature/README.md"]
-            review = sdd_validate.Artifact(
-                planning_root / "Plans/Feature/reviews/01-final.md",
-                "Plans/Feature/reviews/01-final.md",
-                {
-                    "reviewed_phase_intent_sha256": hashlib.sha256(sdd_validate.project_artifact(phase)).hexdigest(),
-                    "reviewed_plan_intent_sha256": hashlib.sha256(sdd_validate.project_artifact(plan)).hexdigest(),
-                },
-                "",
-                "",
-                1,
-            )
-            validator._verify_phase_review_intent_digests(phase, review, 1)
-            self.assertNotIn("SDD174", {item.code for item in validator.out})
-
-            phase.path.write_text(phase.path.read_text(encoding="utf-8").replace("status: planned", "status: in-progress", 1).replace("- [ ] Implement it.", "- [x] Implement it.", 1).replace("- [ ] AC-01", "- [x] AC-01", 1).replace("Pending — not complete.", "Recorded task evidence.", 1), encoding="utf-8")
-            plan.path.write_text(plan.path.read_text(encoding="utf-8").replace("updated: 2026-07-21", "updated: 2026-07-22", 1).replace("status: planned", "status: in-progress", 1).replace("Pending — not complete.", "Recorded plan evidence.", 1), encoding="utf-8")
-            validator = sdd_validate.Validator(planning_root, target_repository)
-            validator._discover()
-            phase = validator.by_path["Plans/Feature/01-Build.md"]
-            validator._verify_phase_review_intent_digests(phase, review, 1)
-            self.assertNotIn("SDD174", {item.code for item in validator.out})
-
-            phase.path.write_text(phase.path.read_text(encoding="utf-8").replace("Build it according to FR-01 and NFR-01.", "Build a different feature."), encoding="utf-8")
-            validator = sdd_validate.Validator(planning_root, target_repository)
-            validator._discover()
-            phase = validator.by_path["Plans/Feature/01-Build.md"]
-            validator._verify_phase_review_intent_digests(phase, review, 1)
-            self.assertTrue(any("phase intent digest" in item.message for item in validator.out))
-
-            plan = validator.by_path["Plans/Feature/README.md"]
-            plan.path.write_text(plan.path.read_text(encoding="utf-8").replace("Build the feature.", "Build another feature."), encoding="utf-8")
-            validator = sdd_validate.Validator(planning_root, target_repository)
-            validator._discover()
-            phase = validator.by_path["Plans/Feature/01-Build.md"]
-            validator._verify_phase_review_intent_digests(phase, review, 1)
-            self.assertTrue(any("plan README intent digest" in item.message for item in validator.out))
-
     def test_git_phase_review_artifact_is_committed_and_unchanged_at_head(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -895,8 +940,7 @@ class ValidatorTests(unittest.TestCase):
                 review_scope: phase
                 frozen: true
                 verdict: Aligned
-                reviewed_phase_intent_sha256: {'a' * 64}
-                reviewed_plan_intent_sha256: {'b' * 64}
+                reviewed_planning_revision: {implementation_revision}
                 review_mode: independent
                 lane_results:
                   - lane: review_plan_drift
@@ -979,6 +1023,15 @@ class ValidatorTests(unittest.TestCase):
                 1,
             )
             self.assertIn("SDD173", {item.code for item in validator.out})
+            historical = sdd_validate.Validator(root, root, "historical")
+            historical._discover()
+            historical._verify_git_phase_post_review_state(
+                historical.by_path["Plans/Feature/01-Build.md"],
+                historical.by_path["Plans/Feature/reviews/01-final.md"],
+                implementation_revision,
+                1,
+            )
+            self.assertNotIn("SDD173", {item.code for item in historical.out})
 
     def test_git_phase_post_review_state_rejects_dirty_target_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -991,6 +1044,16 @@ class ValidatorTests(unittest.TestCase):
             phase = validator.by_path["Plans/Feature/01-Build.md"]
             validator._verify_git_phase_post_review_state(phase, phase, endpoint, 1)
             self.assertIn("SDD173", {item.code for item in validator.out})
+
+            historical = sdd_validate.Validator(root, root, "historical")
+            historical._discover()
+            historical._verify_git_phase_post_review_state(
+                historical.by_path["Plans/Feature/01-Build.md"],
+                historical.by_path["Plans/Feature/01-Build.md"],
+                endpoint,
+                1,
+            )
+            self.assertNotIn("SDD173", {item.code for item in historical.out})
 
     def test_git_phase_post_review_state_rejects_dirty_ignored_submodule(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1073,48 +1136,26 @@ class ValidatorTests(unittest.TestCase):
             validator._verify_git_phase_post_review_state(phase, phase, endpoint, 1)
             self.assertIn("SDD173", {item.code for item in validator.out})
 
-    def test_complete_plan_requires_child_ids_and_evidence_rows(self) -> None:
+    def test_git_phase_post_review_state_rejects_old_evidence_directory_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_valid_tree(root)
-            row = "| `pytest` | `/repo` | PASS (`exit 0`) | Behavior passed. |"
-            table = (
-                "| Command | Working directory | Result | Observable evidence |\n"
-                "|---|---|---|---|\n" + row
+            endpoint = self.commit_all(root)
+            evidence = root / "Plans/Feature/evidence/post-review.txt"
+            evidence.parent.mkdir()
+            evidence.write_text("material post-review content\n", encoding="utf-8")
+            subprocess.run(["git", "add", str(evidence)], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "post-review evidence"],
+                cwd=root,
+                check=True,
+                capture_output=True,
             )
-            indented_table = table.replace("\n", "\n        ")
-            phase = phase_document(task_status="complete")
-            phase = phase.replace("status: planned", "status: complete", 1)
-            phase = phase.replace("- [ ] Implement it.", "- [x] Implement it.")
-            phase = phase.replace("- [ ] AC-01", "- [x] AC-01")
-            phase = phase.replace("Pending — not complete.", indented_table, 1)
-            phase = phase.replace(
-                "Pending — not complete.",
-                f"### Task 1.1 Evidence Rollup\n        {indented_table}",
-                1,
-            )
-            write(root, "Plans/Feature/01-Build.md", phase)
-            plan = plan_document(phase_status="complete").replace(
-                "status: active", "status: complete", 1
-            )
-            plan = plan.replace(
-                "Pending — not complete.",
-                f"<!--\n        ### Phase 1 Evidence Rollup\n        {indented_table}\n"
-                f"        ### Task 1.1 Evidence Rollup\n        {indented_table}\n        -->",
-            )
-            write(root, "Plans/Feature/README.md", plan)
-            self.assertIn("SDD158", {item.code for item in self.validate(root)})
-
-            plan = plan.replace(
-                f"<!--\n        ### Phase 1 Evidence Rollup\n        {indented_table}\n"
-                f"        ### Task 1.1 Evidence Rollup\n        {indented_table}\n        -->",
-                f"### Phase 1 Evidence Rollup\n        {indented_table}\n"
-                f"        ### Task 1.1 Evidence Rollup\n        {indented_table}",
-            )
-            write(root, "Plans/Feature/README.md", plan)
-            codes = {item.code for item in self.validate(root)}
-            self.assertNotIn("SDD158", codes)
-            self.assertNotIn("SDD020", codes)
+            validator = sdd_validate.Validator(root, root, "current")
+            validator._discover()
+            phase = validator.by_path["Plans/Feature/01-Build.md"]
+            validator._verify_git_phase_post_review_state(phase, phase, endpoint, 1)
+            self.assertIn("SDD173", {item.code for item in validator.out})
 
     def test_fenced_required_heading_is_not_a_real_section(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1130,117 +1171,6 @@ class ValidatorTests(unittest.TestCase):
             self.assertTrue(
                 any("Plan Completion Evidence" in item.message for item in findings)
             )
-
-    def test_dirty_git_snapshot_matches_changed_and_untracked_files(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            root.mkdir(exist_ok=True)
-            (root / "tracked.txt").write_text("base", encoding="utf-8")
-            base = self.commit_all(root)
-            (root / "tracked.txt").write_text("changed", encoding="utf-8")
-            (root / "untracked.txt").write_text("new", encoding="utf-8")
-
-            tracked, error = sdd_validate.worktree_snapshot_entry(root, b"tracked.txt", base)
-            self.assertIsNone(error)
-            assert tracked
-            state, mode, size, digest = tracked
-            manifest = (
-                "sdd-dirty-snapshot-v1\n"
-                f"base\t{base}\n"
-                f"entry\t{state}\t{mode}\t{size}\t{digest}\ttracked.txt\n"
-            ).encode()
-            errors = sdd_validate.compare_dirty_git_snapshot(
-                root / "snapshot.manifest", manifest, root, base, set()
-            )
-            self.assertTrue(any("omits changed paths: untracked.txt" in item for item in errors))
-
-            untracked, error = sdd_validate.worktree_snapshot_entry(root, b"untracked.txt", base)
-            self.assertIsNone(error)
-            assert untracked
-            state, mode, size, digest = untracked
-            complete = manifest + (
-                f"entry\t{state}\t{mode}\t{size}\t{digest}\tuntracked.txt\n"
-            ).encode()
-            self.assertEqual(
-                [],
-                sdd_validate.compare_dirty_git_snapshot(
-                    root / "snapshot.manifest", complete, root, base, set()
-                ),
-            )
-
-            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
-            subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "user.name=Test",
-                    "-c",
-                    "user.email=test@example.com",
-                    "commit",
-                    "-m",
-                    "advance head",
-                ],
-                cwd=root,
-                check=True,
-                capture_output=True,
-            )
-            (root / "tracked.txt").write_text("changed again", encoding="utf-8")
-            errors = sdd_validate.compare_dirty_git_snapshot(
-                root / "snapshot.manifest", complete, root, base, set()
-            )
-            self.assertTrue(any("differs from worktree" in item for item in errors))
-
-    def test_snapshot_paths_modes_and_declared_ignored_inputs_are_checked(self) -> None:
-        self.assertFalse(sdd_validate.valid_encoded_path("%2E%2E/outside"))
-        self.assertFalse(sdd_validate.valid_encoded_path("%2Ftmp"))
-        self.assertIsNotNone(sdd_validate.parse_inventory_paths("none")[1])
-        self.assertIsNotNone(sdd_validate.parse_inventory_paths("arbitrary text")[1])
-        self.assertEqual(
-            ({"ignored.cfg"}, None),
-            sdd_validate.parse_inventory_paths(
-                "paths: `ignored.cfg`; sha256 recorded by capture tool"
-            ),
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / ".gitignore").write_text("ignored.cfg\nruntime/\n", encoding="utf-8")
-            tracked = root / "tracked.txt"
-            tracked.write_text("base", encoding="utf-8")
-            base = self.commit_all(root)
-            tracked.chmod(0o600)
-            ignored = root / "ignored.cfg"
-            ignored.write_text("ignored input", encoding="utf-8")
-
-            errors = sdd_validate.compare_dirty_git_snapshot(
-                root / "snapshot.manifest",
-                f"sdd-dirty-snapshot-v1\nbase\t{base}\n".encode(),
-                root,
-                base,
-                set(),
-                {"ignored.cfg"},
-            )
-            self.assertTrue(any("ignored.cfg" in item for item in errors))
-            self.assertTrue(any("tracked.txt" in item for item in errors))
-
-            runtime = root / "runtime"
-            runtime.mkdir()
-            (runtime / "config.json").write_text("runtime input", encoding="utf-8")
-            runtime_mode = f"{runtime.lstat().st_mode & 0o177777:06o}"
-            directory_only = (
-                "sdd-dirty-snapshot-v1\n"
-                f"base\t{base}\n"
-                f"directory\t{runtime_mode}\truntime\n"
-            ).encode()
-            errors = sdd_validate.compare_dirty_git_snapshot(
-                root / "snapshot.manifest",
-                directory_only,
-                root,
-                base,
-                set(),
-                {"runtime"},
-                {"runtime"},
-            )
-            self.assertTrue(any("runtime/config.json" in item for item in errors))
 
     def test_reports_status_drift_unknown_dependency_and_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1589,136 +1519,6 @@ class ValidatorTests(unittest.TestCase):
             {item.message for item in selected},
         )
 
-    def test_code_spanned_dirty_evidence_requires_and_validates_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.make_valid_tree(root)
-            evidence = root / "evidence"
-            evidence.mkdir()
-            projection_validator = sdd_validate.Validator(root, root)
-            projection_validator._discover()
-            input_references = (
-                "Plans/Feature/01-Build.md",
-                "Plans/Feature/README.md",
-                "Specs/Feature/README.md",
-            )
-            intent = b"sdd-intent-v2\n"
-            for reference in input_references:
-                projected = sdd_validate.project_artifact(
-                    projection_validator.by_path[reference]
-                )
-                intent += (
-                    f"input\tartifact\t{reference}\t{len(projected)}\n".encode()
-                    + projected
-                )
-            intent_path = evidence / "intent.bin"
-            intent_path.write_bytes(intent)
-            content = b"abc"
-            object_digest = hashlib.sha256(content).hexdigest()
-            snapshot_path = evidence / "snapshot.manifest"
-            object_dir = Path(f"{snapshot_path}.contents")
-            object_dir.mkdir()
-            (object_dir / object_digest).write_bytes(content)
-            snapshot = (
-                "sdd-dirty-snapshot-v1\n"
-                f"base\t{'a' * 40}\n"
-                f"entry\tM\t100644\t3\t{object_digest}\tfile.txt\n"
-            ).encode()
-            snapshot_path.write_bytes(snapshot)
-            block = f"""
-            - Verified: 2026-07-21
-            - Repository: `{root}`
-            - VCS: `git`
-            - Revision / base: `{'a' * 40}-dirty`
-            - Fallback reason: `fixture exercises an explicitly selected dirty-Git fallback`
-            - Evidence exclusions: `none`
-            - Governing intent: `{hashlib.sha256(intent).hexdigest()}` at `evidence/intent.bin`; inputs: {", ".join(input_references)}
-            - Ignored inputs: `none with inspection basis`
-            - Directory inputs: `none with inspection basis`
-            - Content snapshot: `{hashlib.sha256(snapshot).hexdigest()}` at `evidence/snapshot.manifest`
-            - Identity recheck: `validator`, 2026-07-21T12:00:00Z, matched snapshot
-
-            | Command | Working directory | Result | Observable evidence |
-            |---|---|---|---|
-            | `python3 -m unittest` | `{root}` | PASS (`exit 0`) | Named behavior passed. |
-            """
-            phase = phase_document(task_status="complete")
-            phase = phase.replace("status: planned", "status: complete", 1)
-            phase = phase.replace("- [ ] Implement it.", "- [x] Implement it.")
-            phase = phase.replace("- [ ] AC-01", "- [x] AC-01")
-            phase = phase.replace("Pending — not complete.", textwrap.dedent(block).strip())
-            write(root, "Plans/Feature/01-Build.md", phase)
-            write(root, "Plans/Feature/README.md", plan_document(phase_status="complete"))
-            self.commit_all(root)
-            codes = {
-                item.code
-                for item in sdd_validate.Validator(root, root, "historical").run()
-            }
-            self.assertFalse({"SDD070", "SDD071", "SDD072", "SDD074", "SDD075", "SDD076", "SDD077", "SDD078", "SDD079", "SDD159"} & codes)
-
-    def test_dirty_snapshot_digest_wiring_accepts_current_git_identity(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.make_valid_tree(root)
-            source = root / "source.txt"
-            source.write_text("base", encoding="utf-8")
-            base = self.commit_all(root)
-            source.write_text("changed", encoding="utf-8")
-
-            entry, error = sdd_validate.worktree_snapshot_entry(root, b"source.txt", base)
-            self.assertIsNone(error)
-            assert entry
-            state, mode, size, digest = entry
-            snapshot_path = root / "evidence" / "snapshot.manifest"
-            object_path = Path(f"{snapshot_path}.contents") / digest
-            object_path.parent.mkdir(parents=True)
-            object_path.write_bytes(source.read_bytes())
-            exclusions = {
-                "evidence/snapshot.manifest",
-                f"evidence/snapshot.manifest.contents/{digest}",
-            }
-            snapshot = (
-                "sdd-dirty-snapshot-v1\n"
-                f"base\t{base}\n"
-                + "".join(f"exclude\t{value}\n" for value in sorted(exclusions))
-                + f"entry\t{state}\t{mode}\t{size}\t{digest}\tsource.txt\n"
-            ).encode()
-            snapshot_path.write_bytes(snapshot)
-
-            validator = sdd_validate.Validator(root, root, "current")
-            validator._discover()
-            artifact = validator.by_path["Plans/Feature/README.md"]
-            validator._digest(
-                artifact,
-                "Plan Completion Evidence",
-                f"{hashlib.sha256(snapshot).hexdigest()} at evidence/snapshot.manifest",
-                1,
-                capture_kind="snapshot",
-                expected_vcs="git",
-                expected_revision=f"{base}-dirty",
-                expected_exclusions=exclusions,
-                expected_ignored=set(),
-                expected_directories=set(),
-            )
-            self.assertFalse(
-                {"SDD079", "SDD159"} & {item.code for item in validator.out}
-            )
-
-    def test_snapshot_validator_detects_tampered_content_object(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "snapshot.manifest"
-            digest = hashlib.sha256(b"expected").hexdigest()
-            object_dir = Path(f"{path}.contents")
-            object_dir.mkdir()
-            (object_dir / digest).write_bytes(b"tampered")
-            manifest = (
-                "sdd-dirty-snapshot-v1\n"
-                f"base\t{'b' * 40}\n"
-                f"entry\tM\t100644\t8\t{digest}\tfile.txt\n"
-            ).encode()
-            errors = sdd_validate.validate_snapshot(path, manifest)
-            self.assertTrue(any("size" in error or "digest" in error for error in errors))
-
     def test_external_plan_mapping_loads_target_repository_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -1871,24 +1671,8 @@ class ValidatorTests(unittest.TestCase):
             ]
             self.assertEqual(2, len(related_errors))
 
-    def test_snapshot_must_match_recorded_base_and_exclusions(self) -> None:
-        manifest = (
-            "sdd-dirty-snapshot-v1\n"
-            f"base\t{'a' * 40}\n"
-            "exclude\tPlans/Feature/README.md\n"
-            f"entry\tD\t000000\t0\t-\tdeleted.txt\n"
-        ).encode()
-        errors = sdd_validate.validate_snapshot(
-            Path("snapshot"),
-            manifest,
-            "git",
-            f"{'b' * 40}-dirty",
-            set(),
-        )
-        self.assertTrue(any("base" in error for error in errors))
-
     def test_evidence_rows_preserve_kind_and_nonpassing_results(self) -> None:
-        rows = sdd_validate.evidence_rows(
+        rows = sdd_validate.evidence_rows(textwrap.dedent(
             """
             | Command | Working directory | Result | Observable evidence |
             |---|---|---|---|
@@ -1898,10 +1682,23 @@ class ValidatorTests(unittest.TestCase):
             |---|---|---|---|
             | `reviewer` | `file` | PASS | Inspected. |
             """
-        )
+        ))
         self.assertEqual("command", rows[0][0])
+        self.assertEqual(("pytest", "/repo", "SKIPPED", "Not executed."), rows[0][1])
         self.assertEqual("SKIPPED", rows[0][1][2])
         self.assertEqual("tool", rows[1][0])
+        formatted_headers = sdd_validate.evidence_rows(
+            """
+            | **Command** | _Working directory_ | <em>Result</em> | `Observable evidence` |
+            |---|---|---|---|
+            | `pytest` | `/repo` | PASS (`exit 0`) | Formatted command header parsed. |
+
+            | **Tool / inspection** | _Context_ | <em>Result</em> | `Observable evidence` |
+            |---|---|---|---|
+            | `reviewer` | `file` | PASS | Formatted tool header parsed. |
+            """
+        )
+        self.assertEqual([], formatted_headers)
         fenced = """
             ````markdown
             | Command | Working directory | Result | Observable evidence |
@@ -1910,20 +1707,6 @@ class ValidatorTests(unittest.TestCase):
             ````
         """
         self.assertEqual([], sdd_validate.evidence_rows(textwrap.dedent(fenced)))
-        rollup = """
-            ### Task 1.1 Evidence Rollup
-            ```text
-            exact captured output
-            ```
-        """
-        bodies = sdd_validate.rollup_bodies(textwrap.dedent(rollup), "Task 1.1 Evidence Rollup")
-        self.assertEqual(1, len(bodies))
-        self.assertIn("```text\nexact captured output\n```", bodies[0])
-        duplicate = textwrap.dedent(rollup + rollup)
-        self.assertEqual(
-            2,
-            len(sdd_validate.rollup_bodies(duplicate, "Task 1.1 Evidence Rollup")),
-        )
         task_body = """
             ### Notes
             ````markdown
@@ -1935,16 +1718,6 @@ class ValidatorTests(unittest.TestCase):
         """
         evidence = sdd_validate.completion_evidence_body(textwrap.dedent(task_body))
         self.assertEqual("proof  retained", evidence)
-        inline_rollup = """
-            ### Task 1.1 Evidence Rollup
-            proof <!-- annotation --> retained
-        """
-        self.assertEqual(
-            [evidence],
-            sdd_validate.rollup_bodies(
-                textwrap.dedent(inline_rollup), "Task 1.1 Evidence Rollup"
-            ),
-        )
 
     def test_fenced_spec_definition_does_not_preserve_append_only_id(self) -> None:
         source = spec_document().replace(
@@ -2136,7 +1909,7 @@ class ValidatorTests(unittest.TestCase):
             - Verified: 2026-07-23
             - Repository: `{root}`
             - VCS: `git`
-            - Revision / base: `{implementation_revision}`
+            - Revision / checkpoint: `{implementation_revision}`
             - Identity recheck: `git diff-tree --exit-code {implementation_revision}`, 2026-07-23T12:00:00Z, matched commit tree
 
             | Command | Working directory | Result | Observable evidence |
@@ -2195,7 +1968,7 @@ class ValidatorTests(unittest.TestCase):
             - Verified: 2026-07-23
             - Repository: `{root}`
             - VCS: `git`
-            - Revision / base: `{implementation_revision}`
+            - Revision / checkpoint: `{implementation_revision}`
             - Identity recheck: `git diff-tree --exit-code {implementation_revision}`, 2026-07-23T12:00:00Z, matched commit tree
 
             | Command | Working directory | Result | Observable evidence |
@@ -2262,7 +2035,7 @@ class ValidatorTests(unittest.TestCase):
             - Verified: 2026-07-23
             - Repository: `/tmp/example`
             - VCS: `git`
-            - Revision / base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+            - Revision / checkpoint: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
             - Identity recheck: `git aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, 2026-07-23T12:00:00Z, matched commit
 
             | Tool / inspection | Context | Result | Observable evidence |
@@ -2302,86 +2075,1089 @@ class ValidatorTests(unittest.TestCase):
                 any("lifecycle completion is not committed" in item.message for item in validator.out)
             )
 
-    def test_deleted_or_nested_fallback_capture_reports_diagnostic(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.make_valid_tree(root)
-            capture = root / "capture.bin"
-            capture.write_bytes(b"capture")
-            self.commit_all(root)
-            capture.unlink()
-            validator = sdd_validate.Validator(root, root, "current")
-            validator._discover()
-            artifact = validator.by_path["Plans/Feature/README.md"]
-            validator._verify_capture_committed(
-                artifact, "capture.bin", "Plan Completion Evidence", 1
+    def test_completed_task_identities_match_documented_grammar(self) -> None:
+        artifact = sdd_validate.Artifact(Path("phase.md"), "phase.md", {}, "", "", 1)
+        validator = sdd_validate.Validator(Path("."), Path("."))
+        body = (
+            "### Completed task identities\n"
+            "- `1.1`: `<native implementation revision/checkpoint>`\n"
+        )
+        validator._completed_identities(
+            artifact,
+            body,
+            "Completed task identities",
+            {"1.1": "<native implementation revision/checkpoint>"},
+            1,
+            "task",
+        )
+        self.assertEqual([], validator.out)
+        for invalid in (
+            body + "- `1.1`: `<native implementation revision/checkpoint>`\n",
+            "### Completed task identities\n",
+            "### Completed task identities\n- `1.2`: `<native implementation revision/checkpoint>`\n",
+            "### Completed task identities\n- `1.1`: `different`\n",
+            "### Completed task identities\n- 1.1: <native implementation revision/checkpoint>\n",
+            "### Completed task identities\n- `1.1`: `<native implementation revision/checkpoint>\n",
+            "### Completed task identities\n- `1.1`: `<native implementation revision/checkpoint>`; review: `Plans/Feature/reviews/01-final.md`\n",
+            "### Task 1.1 Evidence Rollup\nproof\n",
+        ):
+            validator.out.clear()
+            validator._completed_identities(
+                artifact,
+                invalid,
+                "Completed task identities",
+                {"1.1": "<native implementation revision/checkpoint>"},
+                1,
+                "task",
             )
-            self.assertTrue(any("missing from the worktree" in item.message for item in validator.out))
+            self.assertIn("SDD157", {item.code for item in validator.out})
 
+    def test_completed_phase_identities_match_documented_grammar(self) -> None:
+        artifact = sdd_validate.Artifact(Path("plan.md"), "plan.md", {}, "", "", 1)
+        validator = sdd_validate.Validator(Path("."), Path("."))
+        body = (
+            "### Completed phase identities\n"
+            "- `1`: `<phase completion revision/checkpoint>`; review: `<final review artifact path>`\n"
+        )
+        expected = {
+            "1": (
+                "<phase completion revision/checkpoint>",
+                "<final review artifact path>",
+            )
+        }
+        validator._completed_identities(
+            artifact, body, "Completed phase identities", expected, 1, "phase"
+        )
+        self.assertEqual([], validator.out)
+        for invalid in (
+            body + "- `1`: `<phase completion revision/checkpoint>`; review: `<final review artifact path>`\n",
+            "### Completed phase identities\n",
+            "### Completed phase identities\n- `2`: `<phase completion revision/checkpoint>`; review: `<final review artifact path>`\n",
+            "### Completed phase identities\n- `1`: `different`; review: `<final review artifact path>`\n",
+            "### Completed phase identities\n- 1: <phase completion revision/checkpoint>; review: <final review artifact path>\n",
+            "### Completed phase identities\n- `1`: `<phase completion revision/checkpoint>`; review: `<final review artifact path>\n",
+            "### Completed phase identities\n- `1`: `<phase completion revision/checkpoint>`; review: `<final review artifact path>`; extra: `suffix`\n",
+            "### Completed phase identities\n- `1`: `<phase completion revision/checkpoint>`\n",
+            "### Phase 1 Evidence Rollup\nproof\n",
+        ):
+            validator.out.clear()
+            validator._completed_identities(
+                artifact, invalid, "Completed phase identities", expected, 1, "phase"
+            )
+            self.assertIn("SDD158", {item.code for item in validator.out})
+
+    def test_git_plan_checkpoint_contains_completed_phase_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_valid_tree(root)
-            self.commit_all(root)
-            nested = root / "nested"
-            nested.mkdir()
-            subprocess.run(["git", "init"], cwd=nested, check=True, capture_output=True)
-            (nested / "capture.bin").write_bytes(b"capture")
-            subprocess.run(["git", "add", "capture.bin"], cwd=nested, check=True)
+            base = self.commit_all(root)
+            (root / "phase-checkpoint.txt").write_text("phase\n", encoding="utf-8")
+            subprocess.run(["git", "add", "phase-checkpoint.txt"], cwd=root, check=True)
             subprocess.run(
-                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "nested capture"],
-                cwd=nested,
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "phase checkpoint"],
+                cwd=root,
                 check=True,
                 capture_output=True,
             )
-            validator = sdd_validate.Validator(root, root, "current")
+            phase_checkpoint = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            (root / "plan-checkpoint.txt").write_text("plan\n", encoding="utf-8")
+            subprocess.run(["git", "add", "plan-checkpoint.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "plan checkpoint"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            plan_checkpoint = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            phase_evidence = f"- VCS: `git`\n- Revision / checkpoint: `{phase_checkpoint}`"
+            indented_phase_evidence = phase_evidence.replace("\n", "\n        ")
+            write(
+                root,
+                "Plans/Feature/01-Build.md",
+                phase_document().replace("Pending — not complete.", indented_phase_evidence),
+            )
+            write(root, "Plans/Feature/README.md", plan_document(phase_status="complete"))
+            validator = sdd_validate.Validator(root, root, "historical")
             validator._discover()
-            artifact = validator.by_path["Plans/Feature/README.md"]
-            validator._verify_capture_committed(
-                artifact, "nested/capture.bin", "Plan Completion Evidence", 1
-            )
-            self.assertTrue(
-                any("not in the lifecycle artifact's Git worktree" in item.message for item in validator.out)
-            )
+            plan = validator.by_path["Plans/Feature/README.md"]
+            phases = plan.meta["phases"]
+            plan_evidence = f"- VCS: `git-worktree`\n- Revision / checkpoint: `{plan_checkpoint}`"
+            validator._verify_git_plan_phase_checkpoints(plan, phases, plan_evidence, 1)
+            self.assertNotIn("SDD175", {item.code for item in validator.out})
 
-    def test_intent_projection_rejects_noncanonical_artifact_payload(self) -> None:
-        payload = b"---\ntype: plan\n---\n"
-        content = (
-            b"sdd-intent-v2\ninput\tartifact\tPlans/Feature/README.md\t"
-            + str(len(payload)).encode()
-            + b"\n"
-            + payload
+            validator.out.clear()
+            validator._verify_git_plan_phase_checkpoints(
+                plan,
+                phases,
+                f"- VCS: `git`\n- Revision / checkpoint: `{base}`",
+                1,
+            )
+            self.assertIn("SDD175", {item.code for item in validator.out})
+
+            validator.out.clear()
+            write(
+                root,
+                "Plans/Feature/01-Build.md",
+                phase_document().replace(
+                    "Pending — not complete.",
+                    "- VCS: `git`\n        - Revision / checkpoint: `" + "a" * 40 + "`",
+                ),
+            )
+            validator._discover()
+            plan = validator.by_path["Plans/Feature/README.md"]
+            validator._verify_git_plan_phase_checkpoints(plan, plan.meta["phases"], plan_evidence, 1)
+            self.assertIn("SDD175", {item.code for item in validator.out})
+
+            validator.out.clear()
+            write(
+                root,
+                "Plans/Feature/01-Build.md",
+                phase_document().replace(
+                    "Pending — not complete.",
+                    "- VCS: `perforce`\n        - Revision / checkpoint: `42`",
+                ),
+            )
+            validator._discover()
+            plan = validator.by_path["Plans/Feature/README.md"]
+            validator._verify_git_plan_phase_checkpoints(plan, plan.meta["phases"], plan_evidence, 1)
+            self.assertIn("SDD175", {item.code for item in validator.out})
+
+            validator.out.clear()
+            write(
+                root,
+                "Plans/Feature/01-Build.md",
+                phase_document().replace("Pending — not complete.", indented_phase_evidence),
+            )
+            validator._discover()
+            plan = validator.by_path["Plans/Feature/README.md"]
+            phase = validator.by_path["Plans/Feature/01-Build.md"]
+            validator.artifact_repos[phase.rel] = root / "other-repository"
+            validator._verify_git_plan_phase_checkpoints(plan, plan.meta["phases"], plan_evidence, 1)
+            self.assertIn("SDD175", {item.code for item in validator.out})
+
+    def test_phase_review_lane_results_are_complete_and_auditable(self) -> None:
+        revision = "b" * 40
+        meta = {
+            "rev": revision,
+            "reviewed_planning_revision": "a" * 40,
+            "review_mode": "independent",
+            "lane_results": [
+                {"lane": "review_plan_drift", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Phase checklist compared against task evidence."},
+                {"lane": "review_quality", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Changed implementation paths inspected."},
+                {"lane": "review_spec_compliance", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Acceptance criteria compared to implementation."},
+                {"lane": "review_blind_spots", "result": "PASS/Aligned", "reviewed_identity": revision, "evidence": "Empty-input branches inspected."},
+            ],
+        }
+        self.assertEqual([], sdd_validate.phase_review_schema_errors(meta))
+        meta["reviewed_phase_intent_sha256"] = "a" * 64
+        self.assertTrue(sdd_validate.phase_review_schema_errors(meta))
+
+    def test_phase_review_lifecycle_normalization_allows_lifecycle_changes_and_rejects_nested_policy_status_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            planning_root = Path(directory) / "planning"
+            target_repository = Path(directory) / "target"
+            planning_root.mkdir()
+            target_repository.mkdir()
+            self.make_valid_tree(planning_root)
+            phase_path = planning_root / "Plans/Feature/01-Build.md"
+            phase_path.write_text(
+                phase_path.read_text(encoding="utf-8").replace(
+                    "deliverable: Feature implementation",
+                    "deliverable: Feature implementation\npolicy:\n  status: retained",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            reviewed = self.commit_all(planning_root)
+            validator = sdd_validate.Validator(planning_root, target_repository)
+            validator._discover()
+            phase = validator.by_path["Plans/Feature/01-Build.md"]
+            review = sdd_validate.Artifact(
+                planning_root / "Plans/Feature/reviews/01-final.md",
+                "Plans/Feature/reviews/01-final.md",
+                {"reviewed_planning_revision": reviewed}, "", "", 1,
+            )
+            validator._verify_phase_review_planning_revision(phase, review, 1)
+            self.assertNotIn("SDD174", {item.code for item in validator.out})
+            phase.path.write_text(
+                phase.path.read_text(encoding="utf-8").replace("status: planned", "status: in-progress", 1),
+                encoding="utf-8",
+            )
+            validator = sdd_validate.Validator(planning_root, target_repository)
+            validator._discover()
+            phase = validator.by_path["Plans/Feature/01-Build.md"]
+            validator._verify_phase_review_planning_revision(phase, review, 1)
+            self.assertNotIn("SDD174", {item.code for item in validator.out})
+            phase.path.write_text(
+                phase.path.read_text(encoding="utf-8").replace("status: retained", "status: changed", 1),
+                encoding="utf-8",
+            )
+            validator = sdd_validate.Validator(planning_root, target_repository)
+            validator._discover()
+            validator._verify_phase_review_planning_revision(
+                validator.by_path["Plans/Feature/01-Build.md"], review, 1
+            )
+            self.assertIn("SDD174", {item.code for item in validator.out})
+            subprocess.run(
+                ["git", "add", "Plans/Feature/01-Build.md"],
+                cwd=planning_root,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "-m",
+                    "later phase intent revision",
+                ],
+                cwd=planning_root,
+                check=True,
+                capture_output=True,
+            )
+            current = sdd_validate.Validator(planning_root, target_repository, "current")
+            current._discover()
+            current._verify_phase_review_planning_revision(
+                current.by_path["Plans/Feature/01-Build.md"], review, 1
+            )
+            self.assertIn("SDD174", {item.code for item in current.out})
+            historical = sdd_validate.Validator(planning_root, target_repository, "historical")
+            historical._discover()
+            historical._verify_phase_review_planning_revision(
+                historical.by_path["Plans/Feature/01-Build.md"], review, 1
+            )
+            self.assertNotIn("SDD174", {item.code for item in historical.out})
+            phase_path.write_text(
+                phase_path.read_text(encoding="utf-8").replace("status: changed", "status: retained", 1),
+                encoding="utf-8",
+            )
+            plan_path = planning_root / "Plans/Feature/README.md"
+            plan_path.write_text(
+                plan_path.read_text(encoding="utf-8").replace("Build the feature.", "Build a different feature."),
+                encoding="utf-8",
+            )
+            validator = sdd_validate.Validator(planning_root, target_repository)
+            validator._discover()
+            validator._verify_phase_review_planning_revision(
+                validator.by_path["Plans/Feature/01-Build.md"], review, 1
+            )
+            self.assertIn("SDD174", {item.code for item in validator.out})
+            review.meta["reviewed_planning_revision"] = "f" * 40
+            historical.out.clear()
+            historical._verify_phase_review_planning_revision(
+                historical.by_path["Plans/Feature/01-Build.md"], review, 1
+            )
+            self.assertIn("SDD174", {item.code for item in historical.out})
+
+    def test_full_validator_and_cli_report_unsupported_current_lifecycle_nodes(self) -> None:
+        cases = (
+            (
+                "flow phase task",
+                "Plans/Feature/01-Build.md",
+                (
+                    "tasks:\n"
+                    '  - id: "1.1"\n'
+                    "    title: Implement\n"
+                    "    status: complete\n"
+                    '    verification: "Run tests and satisfy FR-01, NFR-01, and AC-01"'
+                ),
+                (
+                    "tasks: [{id: '1.1', title: Implement, status: complete, "
+                    'verification: "Run tests and satisfy FR-01, NFR-01, and AC-01"}]'
+                ),
+            ),
+            (
+                "multiline plan status",
+                "Plans/Feature/README.md",
+                "status: complete",
+                "status: |\n  complete",
+            ),
         )
-        error, _, _ = sdd_validate.validate_intent_projection(content)
-        self.assertIn("missing common fields", error or "")
+        for name, relative, original, replacement in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_valid_tree(root)
+                self.complete_phase_and_plan(root)
+                path = root / relative
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace(original, replacement, 1),
+                    encoding="utf-8",
+                )
 
-    def test_ipfs_cid_multihash_must_equal_recorded_sha256(self) -> None:
-        digest = hashlib.sha256(b"durable evidence").digest()
-        alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-        number = int.from_bytes(b"\x12\x20" + digest, "big")
-        encoded = ""
-        while number:
-            number, remainder = divmod(number, 58)
-            encoded = alphabet[remainder] + encoded
-        cid = encoded
-        self.assertEqual(digest.hex(), sdd_validate.ipfs_sha256(f"ipfs://{cid}"))
-        self.assertNotEqual("00" * 32, sdd_validate.ipfs_sha256(f"ipfs://{cid}"))
+                findings = sdd_validate.Validator(root, root, "current").run()
+                self.assertIn("SDD174", {item.code for item in findings})
 
-    def test_required_intent_inputs_are_derived_independently(self) -> None:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--root", str(root)],
+                    cwd=root,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(1, result.returncode)
+                self.assertIn("ERROR SDD174", result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_completion_rejects_dirty_no_scm_and_synthetic_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self.make_valid_tree(root)
-            validator = sdd_validate.Validator(root, root)
+            validator = sdd_validate.Validator(root, root, "historical")
             validator._discover()
-            validator._index()
-            phase = validator.by_path["Plans/Feature/01-Build.md"]
-            self.assertEqual(
-                {
-                    "Plans/Feature/01-Build.md",
-                    "Plans/Feature/README.md",
-                    "Specs/Feature/README.md",
-                },
-                validator._required_intent_inputs(phase),
+            artifact = validator.by_path["Plans/Feature/README.md"]
+            body = f"""
+            - Verified: 2026-07-23
+            - Repository: `{root}`
+            - VCS: `git`
+            - Revision / checkpoint: `{'a' * 40}-dirty`
+            - Governing intent: `removed`
+            - Identity recheck: `git`, 2026-07-23T12:00:00Z, matched commit
+
+            | Tool / inspection | Context | Result | Observable evidence |
+            |---|---|---|---|
+            | `inspection` | `repo` | PASS | Clean commit inspected. |
+            """
+            validator._evidence(artifact, "in-progress", "Plan Completion Evidence", 1, textwrap.dedent(body))
+            self.assertTrue({"SDD072", "SDD074"}.issubset({item.code for item in validator.out}))
+            validator.out.clear()
+            none = body.replace("VCS: `git`", "VCS: `none`").replace(
+                f"`{'a' * 40}-dirty`", "`none`"
+            ).replace("- Governing intent: `removed`\n", "")
+            validator._evidence(artifact, "complete", "Plan Completion Evidence", 1, textwrap.dedent(none))
+            self.assertIn("SDD172", {item.code for item in validator.out})
+
+    def test_phase_review_schema_rejects_short_planning_revision(self) -> None:
+        self.assertIn(
+            "reviewed_planning_revision must be a full 40-hex Git commit",
+            sdd_validate.phase_review_schema_errors(
+                {"reviewed_planning_revision": "short", "review_mode": "independent", "lane_results": []}
+            ),
+        )
+
+    def test_evidence_labels_are_unique_visible_entries(self) -> None:
+        artifact = sdd_validate.Artifact(Path("plan.md"), "plan.md", {"type": "plan"}, "", "", 1)
+        validator = sdd_validate.Validator(Path("."), Path("."), "historical")
+        body = textwrap.dedent(
+            """
+            - Verified: 2026-07-23
+            - Repository: `/repo`
+            - VCS: `none`
+            - Revision / checkpoint: `none`
+            - Identity recheck: `inspection`, 2026-07-23T12:00:00Z, matched none
+
+            | Tool / inspection | Context | Result | Observable evidence |
+            |---|---|---|---|
+            | `inspection` | `repo` | PASS | Aggregate state inspected. |
+            """
+        )
+        fenced_and_commented = body + textwrap.dedent(
+            """
+            <!--
+            - VCS: `git`
+            -->
+            ```markdown
+            - VCS: `git`
+            ```
+            """
+        )
+        validator._evidence(artifact, "in-progress", "Plan Completion Evidence", 1, fenced_and_commented)
+        self.assertNotIn("SDD071", {item.code for item in validator.out})
+        validator.out.clear()
+        validator._evidence(
+            artifact,
+            "in-progress",
+            "Plan Completion Evidence",
+            1,
+            body + "- VCS: `none`\n",
+        )
+        self.assertIn("SDD071", {item.code for item in validator.out})
+
+        task = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", "", 1)
+        validator.out.clear()
+        validator._task_review_evidence(
+            task,
+            "Task 1.1 Completion Evidence",
+            "- Focused review: `inspect`\n- Focused review: `inspect`\n- Reviewed candidate / final: `none`\n- Review result: PASS/Aligned\n",
+            "none",
+            "none",
+            1,
+        )
+        self.assertIn("SDD169", {item.code for item in validator.out})
+
+        validator.out.clear()
+        phase = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", "", 1)
+        validator._phase_final_review(
+            phase,
+            "- Final aligned review: `one`; frozen: `a`\n- Final aligned review: `two`; frozen: `b`\n",
+            1,
+        )
+        self.assertIn("SDD166", {item.code for item in validator.out})
+
+    def test_indented_comment_terminator_exposes_duplicate_and_failing_evidence(self) -> None:
+        body = textwrap.dedent(
+            """
+            - Verified: 2026-07-23
+            - Repository: `/repo`
+            - VCS: `none`
+            - Revision / checkpoint: `none`
+            - Identity recheck: `inspection`, 2026-07-23T12:00:00Z, matched none
+
+            | Tool / inspection | Context | Result | Observable evidence |
+            |---|---|---|---|
+            | `inspection` | `repo` | PASS | Aggregate state inspected. |
+            <!-- hidden evidence
+                -->
+            - VCS: `none`
+            | Tool / inspection | Context | Result | Observable evidence |
+            |---|---|---|---|
+            | `inspection` | `repo` | FAIL | Duplicate evidence was visible. |
+            """
+        )
+        validator = sdd_validate.Validator(Path("."), Path("."), "historical")
+        artifact = sdd_validate.Artifact(Path("plan.md"), "plan.md", {"type": "plan"}, "", "", 1)
+        validator._evidence(artifact, "in-progress", "Plan Completion Evidence", 1, body)
+        self.assertTrue({"SDD071", "SDD073"}.issubset({item.code for item in validator.out}))
+
+    def test_unterminated_comment_inside_fence_does_not_hide_following_markdown(self) -> None:
+        body = textwrap.dedent(
+            """
+            - Verified: 2026-07-23
+            - Repository: `/repo`
+            - VCS: `none`
+            - Revision / checkpoint: `none`
+            - Identity recheck: `inspection`, 2026-07-23T12:00:00Z, matched none
+
+            ```markdown
+            <!-- literal comment in example code
+            ```
+            - VCS: `none`
+            ### Task 1.1 Evidence Rollup
+            Legacy proof.
+            """
+        )
+        validator = sdd_validate.Validator(Path("."), Path("."), "historical")
+        plan = sdd_validate.Artifact(Path("plan.md"), "plan.md", {"type": "plan"}, "", "", 1)
+        validator._evidence(plan, "in-progress", "Plan Completion Evidence", 1, body)
+        self.assertIn("SDD071", {item.code for item in validator.out})
+
+        validator.out.clear()
+        phase = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, body, "", 1)
+        validator._headings(phase)
+        self.assertIn("SDD157", {item.code for item in validator.out})
+
+    def test_raw_fence_info_comment_does_not_hide_visible_evidence_labels(self) -> None:
+        body = textwrap.dedent(
+            """
+            - Verified: 2026-07-23
+            - Repository: `/repo`
+            ```markdown <!--
+            - VCS: `git`
+            ```
+            - VCS: `none`
+            - Revision / checkpoint: `none`
+            - Identity recheck: `inspection`, 2026-07-23T12:00:00Z, matched none
+
+            | Tool / inspection | Context | Result | Observable evidence |
+            |---|---|---|---|
+            | `inspection` | `repo` | PASS | Aggregate state inspected. |
+            """
+        )
+        self.assertEqual(["`none`"], sdd_validate.evidence_values(body, "VCS"))
+        validator = sdd_validate.Validator(Path("."), Path("."), "historical")
+        artifact = sdd_validate.Artifact(Path("plan.md"), "plan.md", {"type": "plan"}, "", "", 1)
+        validator._evidence(artifact, "in-progress", "Plan Completion Evidence", 1, body)
+        self.assertNotIn("SDD071", {item.code for item in validator.out})
+
+    def test_indented_code_is_not_visible_evidence_or_identity(self) -> None:
+        labels = "\n".join(
+            f"    {line}"
+            for line in (
+                "- Verified: 2026-07-23",
+                "- Repository: `/repo`",
+                "- VCS: `none`",
+                "- Revision / checkpoint: `none`",
+                "- Identity recheck: `inspection`, 2026-07-23T12:00:00Z, matched none",
             )
+        ) + "\n"
+        validator = sdd_validate.Validator(Path("."), Path("."), "historical")
+        artifact = sdd_validate.Artifact(Path("plan.md"), "plan.md", {"type": "plan"}, "", "", 1)
+        validator._evidence(artifact, "complete", "Plan Completion Evidence", 1, labels)
+        self.assertIn("SDD071", {item.code for item in validator.out})
+
+        table = "    | Command | Working directory | Result | Observable evidence |\n    |---|---|---|---|\n    | `pytest` | `/repo` | PASS | Fake result. |\n"
+        self.assertEqual([], sdd_validate.evidence_rows(table))
+        self.assertEqual([], sdd_validate.heading_bodies("    ### Completion Evidence\nproof\n", 3, "Completion Evidence"))
+
+        validator.out.clear()
+        validator._completed_identities(
+            artifact,
+            "### Completed task identities\n    - `1.1`: `checkpoint`\n",
+            "Completed task identities",
+            {"1.1": "checkpoint"},
+            1,
+            "task",
+        )
+        self.assertIn("SDD157", {item.code for item in validator.out})
+
+        for indent in ("", " ", "   "):
+            with self.subTest(indent=len(indent)):
+                self.assertEqual(
+                    ["proof"],
+                    sdd_validate.heading_bodies(
+                        f"{indent}### Completion Evidence\nproof\n", 3, "Completion Evidence"
+                    ),
+                )
+
+    def test_tab_and_mixed_indent_cannot_complete_plan_evidence(self) -> None:
+        evidence_labels = (
+            "- Verified:",
+            "- Repository:",
+            "- VCS:",
+            "- Revision / checkpoint:",
+            "- Identity recheck:",
+        )
+        for name, indent in (("tab", "\t"), ("mixed", " \t")):
+            with self.subTest(indent=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_valid_tree(root)
+                self.complete_phase_and_plan(root)
+                plan_path = root / "Plans/Feature/README.md"
+                plan = plan_path.read_text(encoding="utf-8")
+                for label in evidence_labels:
+                    plan = plan.replace(f"\n{label}", f"\n{indent}{label}", 1)
+                for line in (
+                    "| Command | Working directory | Result | Observable evidence |",
+                    "|---|---|---|---|",
+                    "| `python3 -m unittest`",
+                    "- `1`: ",
+                ):
+                    plan = plan.replace(f"\n{line}", f"\n{indent}{line}", 1)
+                plan_path.write_text(plan, encoding="utf-8")
+
+                findings = self.validate(root)
+                codes = {item.code for item in findings if item.path == "Plans/Feature/README.md"}
+
+                self.assertTrue({"SDD071", "SDD072", "SDD158"} <= codes)
+
+    def test_complete_phase_rejects_indented_unchecked_subtasks_and_criteria(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            self.complete_phase_and_plan(root)
+            phase_path = root / "Plans/Feature/01-Build.md"
+            phase = phase_path.read_text(encoding="utf-8")
+            phase = phase.replace("- [x] Implement it.", "  - [ ] Implement it.", 1)
+            phase = phase.replace("- [x] AC-01", "   - [ ] AC-01", 1)
+            phase_path.write_text(phase, encoding="utf-8")
+
+            findings = self.validate(root)
+            messages = {
+                item.message
+                for item in findings
+                if item.path == "Plans/Feature/01-Build.md" and item.code == "SDD069"
+            }
+
+            self.assertIn("Complete task `1.1` has unchecked subtasks.", messages)
+            self.assertIn("Complete phase has unchecked acceptance criteria.", messages)
+
+        normalized = sdd_validate.normalize_checkboxes(
+            "### Subtasks\n   - [x] Retain this item.\n", 3, "Subtasks"
+        )
+        self.assertIn("   - [ ] Retain this item.", normalized)
+
+    def test_task_rejects_duplicate_visible_subtasks_while_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            phase_path = root / "Plans/Feature/01-Build.md"
+            phase_path.write_text(
+                phase_path.read_text(encoding="utf-8").replace(
+                    "### Notes", "### Subtasks\n- [ ] Duplicate subtask.\n### Notes", 1
+                ),
+                encoding="utf-8",
+            )
+
+            findings = self.validate(root)
+
+            self.assertTrue(
+                any(
+                    item.code == "SDD067"
+                    and "Task `1.1` has duplicate visible `### Subtasks` sections." in item.message
+                    for item in findings
+                )
+            )
+
+    def test_committed_completion_rejects_invalid_subtasks_and_criteria_in_a_clean_checkout(self) -> None:
+        cases = (
+            (
+                "task subtask",
+                "- [x] Implement it.",
+                "  - [ ] Implement it.",
+                "Task 1.1 Completion Evidence",
+            ),
+            (
+                "phase criterion",
+                "- [x] AC-01",
+                "   - [ ] AC-01",
+                "Phase Completion Evidence",
+            ),
+            (
+                "duplicate task subtasks",
+                "### Notes",
+                "### Subtasks\n- [x] Duplicate subtask.\n### Notes",
+                "Task 1.1 Completion Evidence",
+            ),
+        )
+        for name, original, replacement, evidence_name in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_valid_tree(root)
+                self.complete_phase_and_plan(root)
+                phase_path = root / "Plans/Feature/01-Build.md"
+                phase_path.write_text(
+                    phase_path.read_text(encoding="utf-8").replace(original, replacement, 1),
+                    encoding="utf-8",
+                )
+                subprocess.run(["git", "add", "Plans/Feature/01-Build.md"], cwd=root, check=True)
+                subprocess.run(
+                    ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", f"record unchecked {name}"],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                )
+                status = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual("", status.stdout)
+
+                findings = self.validate(root)
+
+                self.assertTrue(
+                    any(
+                        item.code == "SDD072"
+                        and evidence_name in item.message
+                        and "lifecycle completion is not committed" in item.message
+                        for item in findings
+                    )
+                )
+
+    def test_phase_and_plan_checkpoints_allow_merge_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            self.commit_all(root)
+            main_branch = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            subprocess.run(["git", "checkout", "-b", "side"], cwd=root, check=True, capture_output=True)
+            (root / "side.txt").write_text("side\n", encoding="utf-8")
+            subprocess.run(["git", "add", "side.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "side"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(["git", "checkout", main_branch], cwd=root, check=True, capture_output=True)
+            (root / "main.txt").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "main.txt"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "main"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "merge", "--no-ff", "side", "-m", "phase integration"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            checkpoint = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            validator = sdd_validate.Validator(root, root, "current")
+            validator._discover()
+            for relative, evidence_name in (
+                ("Plans/Feature/01-Build.md", "Phase Completion Evidence"),
+                ("Plans/Feature/README.md", "Plan Completion Evidence"),
+            ):
+                with self.subTest(artifact=relative):
+                    validator.out.clear()
+                    validator._verify_clean_git_identity(
+                        validator.by_path[relative], checkpoint, evidence_name, 1, True
+                    )
+                    self.assertEqual([], validator.out)
+
+    def test_lifecycle_normalization_preserves_literal_inline_checked_markers(self) -> None:
+        source = textwrap.dedent(phase_document()).lstrip().replace(
+            "- [ ] Implement it.", "- [x] Implement it with literal inline [x].", 1
+        ).replace("- [ ] AC-01", "- [x] AC-01 with literal inline [x]", 1)
+        artifact = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", source, 1)
+        normalized = sdd_validate.lifecycle_normalized_artifact(artifact).decode()
+        self.assertIn("literal inline [x]", normalized)
+        self.assertNotIn("- [x] Implement it", normalized)
+        changed = source.replace("literal inline [x]", "literal inline [ ]", 1)
+        self.assertNotEqual(
+            normalized,
+            sdd_validate.lifecycle_normalized_artifact(
+                sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", changed, 1)
+            ).decode(),
+        )
+
+    def test_complete_phase_and_plan_parent_evidence_is_validated_once_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            self.complete_phase_and_plan(root)
+
+            class RecordingValidator(sdd_validate.Validator):
+                def __init__(self, *args: object, **kwargs: object) -> None:
+                    super().__init__(*args, **kwargs)
+                    self.parent_evidence_calls: list[str] = []
+
+                def _evidence(self, artifact: object, status: str, name: str, line: int, body: str) -> None:
+                    if name in {"Phase Completion Evidence", "Plan Completion Evidence"}:
+                        self.parent_evidence_calls.append(name)
+                    super()._evidence(artifact, status, name, line, body)
+
+            validator = RecordingValidator(root, root, "current")
+            self.assertEqual([], validator.run())
+            self.assertEqual(
+                ["Phase Completion Evidence", "Plan Completion Evidence"],
+                sorted(validator.parent_evidence_calls),
+            )
+
+    def test_complete_phase_and_plan_reject_invalid_parent_evidence_headings_and_labels_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            self.complete_phase_and_plan(root)
+            phase_path = root / "Plans/Feature/01-Build.md"
+            plan_path = root / "Plans/Feature/README.md"
+            phase_source = phase_path.read_text(encoding="utf-8")
+            phase_prefix, phase_evidence = phase_source.split(
+                "## Phase Completion Evidence\n", 1
+            )
+            phase_path.write_text(
+                phase_prefix
+                + "## Phase Completion Evidence\n"
+                + phase_evidence.replace("- Verified: 2026-07-24\n", "", 1),
+                encoding="utf-8",
+            )
+            plan_path.write_text(
+                plan_path.read_text(encoding="utf-8").replace(
+                    "- Repository:", "- Repository missing:", 1
+                ),
+                encoding="utf-8",
+            )
+            findings = sdd_validate.Validator(root, root, "current").run()
+            label_errors = {
+                item.message
+                for item in findings
+                if item.code == "SDD071"
+            }
+            self.assertTrue(any("Phase Completion Evidence" in message for message in label_errors))
+            self.assertTrue(any("Plan Completion Evidence" in message for message in label_errors))
+
+            phase_path.write_text(
+                phase_path.read_text(encoding="utf-8")
+                + "\n## Phase Completion Evidence\nPending — not complete.\n",
+                encoding="utf-8",
+            )
+            plan_path.write_text(
+                plan_path.read_text(encoding="utf-8").replace(
+                    "## Plan Completion Evidence", "## Plan Completion Evidence missing", 1
+                ),
+                encoding="utf-8",
+            )
+            findings = sdd_validate.Validator(root, root, "current").run()
+            heading_errors = [item.message for item in findings if item.code == "SDD020"]
+            self.assertTrue(any("Phase Completion Evidence" in message and "duplicated" in message for message in heading_errors))
+            self.assertTrue(any("Plan Completion Evidence" in message and "missing" in message for message in heading_errors))
+
+    def test_annotated_tag_objects_are_rejected_for_commit_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            commit = self.commit_all(root)
+            subprocess.run(
+                ["git", "tag", "-a", "release", "-m", "release"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            tag = subprocess.run(
+                ["git", "rev-parse", "release^{tag}"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.assertFalse(sdd_validate.git_commit_exists(root, tag))
+            validator = sdd_validate.Validator(root, root, "historical")
+            validator._discover()
+            phase = validator.by_path["Plans/Feature/01-Build.md"]
+            plan = validator.by_path["Plans/Feature/README.md"]
+
+            validator._verify_clean_git_identity(
+                phase, tag, "Task 1.1 Completion Evidence", 1, False
+            )
+            self.assertIn("SDD072", {item.code for item in validator.out})
+            validator.out.clear()
+            validator._verify_phase_review_identity(
+                phase,
+                f"- Revision / checkpoint: `{tag}`\n",
+                f"{commit}..{tag}",
+                1,
+            )
+            self.assertIn("SDD173", {item.code for item in validator.out})
+            validator.out.clear()
+            validator._verify_git_plan_phase_checkpoints(
+                plan, [], f"- VCS: `git`\n- Revision / checkpoint: `{tag}`\n", 1
+            )
+            self.assertIn("SDD175", {item.code for item in validator.out})
+            validator.out.clear()
+            review = sdd_validate.Artifact(
+                root / "Plans/Feature/reviews/01-final.md",
+                "Plans/Feature/reviews/01-final.md",
+                {"reviewed_planning_revision": tag},
+                "",
+                "",
+                1,
+            )
+            validator._verify_phase_review_planning_revision(phase, review, 1)
+            self.assertIn("SDD174", {item.code for item in validator.out})
+
+    def test_lifecycle_normalized_artifact_normalizes_only_lifecycle_status_paths(self) -> None:
+        source = textwrap.dedent(phase_document()).lstrip().replace("status: planned", "status: complete", 1)
+        source = source.replace(
+            "deliverable: Feature implementation",
+            "deliverable: Feature implementation\npolicy:\n  status: retain",
+            1,
+        ).replace(
+            'verification: "Run tests and satisfy FR-01, NFR-01, and AC-01"',
+            'verification: "Run tests and satisfy FR-01, NFR-01, and AC-01"\n    policy:\n      status: retain-task',
+            1,
+        )
+        source = source.replace("Pending — not complete.", "recorded evidence", 1)
+        artifact = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", source, 1)
+        normalized = sdd_validate.lifecycle_normalized_artifact(artifact).decode()
+        self.assertNotIn("status: complete", normalized)
+        self.assertIn("status: retain", normalized)
+        self.assertIn("status: retain-task", normalized)
+        self.assertIn("Pending — not complete.", normalized)
+        plan_source = textwrap.dedent(plan_document()).lstrip().replace(
+            "status: planned\n    doc: 01-Build.md",
+            "status: complete\n    doc: 01-Build.md\n    policy:\n      status: retain-phase",
+            1,
+        )
+        plan = sdd_validate.Artifact(Path("plan.md"), "plan.md", {"type": "plan"}, "", plan_source, 1)
+        normalized_plan = sdd_validate.lifecycle_normalized_artifact(plan).decode()
+        self.assertNotIn("status: complete", normalized_plan)
+        self.assertIn("status: retain-phase", normalized_plan)
+
+    def test_lifecycle_normalization_preserves_frontmatter_bytes_and_rejects_ambiguous_nodes(self) -> None:
+        source = (
+            "---\r\n"
+            "# Preserve this top-level comment.\r\n"
+            "title: 'Build' # Preserve title quoting and comment.\r\n"
+            "type: phase\r\n"
+            'plan: "Feature"\r\n'
+            "phase: 1\r\n"
+            'status: "complete" # Preserve this lifecycle comment.\r\n'
+            "created: 2026-07-21\r\n"
+            "updated: '2026-07-24'\r\n"
+            "deliverable: Feature implementation\r\n"
+            "policy:\r\n"
+            "  status: \"retain\"\r\n"
+            "tasks:\r\n"
+            "  # Preserve this task comment.\r\n"
+            "  - id: '1.1'\r\n"
+            "    title: \"Implement\"\r\n"
+            "    status: 'complete' # Preserve this task lifecycle comment.\r\n"
+            "    verification: \"Run tests\"\r\n"
+            "    policy:\r\n"
+            "      status: 'retain-task'\r\n"
+            "---\r\n"
+            "# Phase body remains material.\r\n"
+            "## 1.1: Implement\r\n"
+            "### Completion Evidence\r\n"
+            "recorded evidence\r\n"
+            "## Phase Completion Evidence\r\n"
+            "recorded evidence\r\n"
+        )
+        artifact = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", source, 1)
+        normalized = sdd_validate.lifecycle_normalized_artifact(artifact).decode()
+        for preserved in (
+            "# Preserve this top-level comment.\r\n",
+            "title: 'Build' # Preserve title quoting and comment.\r\n",
+            'plan: "Feature"\r\n',
+            "policy:\r\n  status: \"retain\"\r\n",
+            "  # Preserve this task comment.\r\n",
+            "  - id: '1.1'\r\n",
+            "    policy:\r\n      status: 'retain-task'\r\n",
+            " # Preserve this lifecycle comment.\r\n",
+            "    # Preserve this task lifecycle comment.\r\n",
+        ):
+            self.assertIn(preserved, normalized)
+        self.assertNotIn('status: "complete"', normalized)
+        self.assertNotIn("status: 'complete'", normalized)
+        self.assertNotIn("updated: '2026-07-24'", normalized)
+
+        lifecycle_only = source.replace('status: "complete"', "status: planned", 1).replace(
+            "updated: '2026-07-24'", "updated: 2026-07-21", 1
+        ).replace("status: 'complete'", "status: planned", 1)
+        self.assertEqual(
+            normalized,
+            sdd_validate.lifecycle_normalized_artifact(
+                sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", lifecycle_only, 1)
+            ).decode(),
+        )
+        for material_change in (
+            source.replace("title: 'Build'", 'title: "Build"', 1),
+            source.replace("# Preserve this top-level comment.", "# Changed comment."),
+            source.replace("created: 2026-07-21", "created:    2026-07-21", 1),
+            source.replace("status: 'retain-task'", "status: changed", 1),
+        ):
+            self.assertNotEqual(
+                normalized,
+                sdd_validate.lifecycle_normalized_artifact(
+                    sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", material_change, 1)
+                ).decode(),
+            )
+
+        for kind, malformed in (
+            (
+                "phase",
+                "---\ntype: phase\nstatus: complete\ntasks: [{id: '1.1', status: complete}]\n---\n",
+            ),
+            (
+                "plan",
+                "---\ntype: plan\nstatus: complete\nphases: [{id: 1, status: complete}]\n---\n",
+            ),
+            ("phase", "---\ntype: phase\nstatus: |\n  complete\n---\n"),
+        ):
+            with self.assertRaisesRegex(ValueError, "unsupported flow or multiline lifecycle node"):
+                sdd_validate.lifecycle_normalized_artifact(
+                    sdd_validate.Artifact(Path(f"{kind}.md"), f"{kind}.md", {"type": kind}, "", malformed, 1)
+                )
+
+    def test_visible_legacy_evidence_rollups_are_rejected_before_pending_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            plan_path = root / "Plans/Feature/README.md"
+            plan_path.write_text(
+                plan_path.read_text(encoding="utf-8")
+                + "\n### Phase 1 Evidence Rollup\nLegacy proof.\n",
+                encoding="utf-8",
+            )
+            phase_path = root / "Plans/Feature/01-Build.md"
+            phase_path.write_text(
+                phase_path.read_text(encoding="utf-8")
+                + "\n### Task 1.1 Evidence Rollup\nLegacy proof.\n",
+                encoding="utf-8",
+            )
+            findings = self.validate(root)
+            codes_by_path = {
+                item.path: item.code
+                for item in findings
+                if "Evidence Rollup" in item.message
+            }
+            self.assertEqual("SDD158", codes_by_path["Plans/Feature/README.md"])
+            self.assertEqual("SDD157", codes_by_path["Plans/Feature/01-Build.md"])
+
+        for status in ("planned", "in-progress", "complete"):
+            validator = sdd_validate.Validator(Path("."), Path("."))
+            artifact = sdd_validate.Artifact(
+                Path("phase.md"),
+                "phase.md",
+                {"type": "phase", "status": status},
+                "## Phase Completion Evidence\nPending — not complete.\n### Task 1.1 Evidence Rollup\nLegacy proof.\n",
+                "",
+                1,
+            )
+            validator._headings(artifact)
+            self.assertIn("SDD157", {item.code for item in validator.out})
+
+    def test_visible_legacy_evidence_rollup_atx_h3_variants_are_rejected(self) -> None:
+        headings = (
+            "   ### Task 1.1 Evidence Rollup",
+            "### Task 1.1 Evidence Rollup ###   ",
+            "### tAsK 1.1 eViDeNcE rOlLuP",
+        )
+        for heading in headings:
+            with self.subTest(heading=heading), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_valid_tree(root)
+                phase_path = root / "Plans/Feature/01-Build.md"
+                phase_path.write_text(
+                    phase_path.read_text(encoding="utf-8")
+                    + "\n<!--\n### Task 1.1 Evidence Rollup\n-->\n"
+                    + "```markdown\n### Task 1.1 Evidence Rollup\n```\n"
+                    + f"{heading}\nLegacy proof.\n",
+                    encoding="utf-8",
+                )
+
+                findings = self.validate(root)
+
+                self.assertTrue(
+                    any(
+                        item.code == "SDD157"
+                        and item.path == "Plans/Feature/01-Build.md"
+                        for item in findings
+                    )
+                )
+
+    def test_task_evidence_lifecycle_normalization_rejects_extraneous_headings(self) -> None:
+        source = textwrap.dedent(phase_document()).lstrip().replace(
+            "## Overview\nBuild it according to FR-01 and NFR-01.",
+            "## Overview\n### Completion Evidence\nPost-review policy must remain material.\nBuild it according to FR-01 and NFR-01.",
+        )
+        artifact = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", source, 1)
+        normalized = sdd_validate.lifecycle_normalized_artifact(artifact).decode()
+        self.assertIn("Post-review policy must remain material.", normalized)
+
+        changed = source.replace(
+            "Post-review policy must remain material.", "Post-review policy changed after review."
+        )
+        changed_artifact = sdd_validate.Artifact(Path("phase.md"), "phase.md", {"type": "phase"}, "", changed, 1)
+        self.assertNotEqual(
+            normalized,
+            sdd_validate.lifecycle_normalized_artifact(changed_artifact).decode(),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_valid_tree(root)
+            write(root, "Plans/Feature/01-Build.md", source)
+            findings = self.validate(root)
+            self.assertTrue(any(item.code == "SDD067" and "outside" in item.message for item in findings))
+
+            duplicate = source.replace(
+                "Pending — not complete.\n## Acceptance Criteria",
+                "Pending — not complete.\n### Completion Evidence\nDuplicate task evidence.\n## Acceptance Criteria",
+                1,
+            )
+            write(root, "Plans/Feature/01-Build.md", duplicate)
+            findings = self.validate(root)
+            self.assertTrue(any(item.code == "SDD067" and "duplicate" in item.message for item in findings))
 
 
 if __name__ == "__main__":

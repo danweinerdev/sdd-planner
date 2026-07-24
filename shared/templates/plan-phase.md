@@ -45,15 +45,11 @@ tasks: []
   plans, task verification/detail and phase Acceptance Criteria collectively
   cite every requirement and acceptance criterion from every related spec.
 - A complete phase has only complete tasks, no unchecked `- [ ]` Acceptance
-  Criteria, and populated task and phase completion evidence. Phase evidence
-  uses one `### Task <id> Evidence Rollup` block per task and repeats that task's
-  Completion Evidence body verbatim in its block; complete plan evidence uses
-   one labeled phase/task rollup block per child and repeats every child
-  command/tool evidence row exactly in the associated block. It also cites a
-   persisted final `Aligned` phase review run across all four sdd-code-review
-    lanes against a frozen concrete revision/range. Needs changes or Blocked
-    forbids completion; every material post-review code fix gets a new planned
-    task id and complete task revision before a fresh full four-lane review.
+  Criteria, populated task and phase completion evidence, concise completed-task
+  native revision/checkpoint references, and a persisted final `Aligned` phase
+  review across all four sdd-code-review lanes. Needs changes or Blocked forbids
+  completion; every material post-review code fix gets a new planned task id and
+  complete task revision before a fresh full four-lane review.
 -->
 
 ## Overview
@@ -84,33 +80,25 @@ Pending — not complete.
 
 <!-- Keep the exact `Pending — not complete.` line until completion. Evidence
 uses the exact labels `Verified`, `Repository`, `VCS`, `Revision / checkpoint`,
-and `Identity recheck`, each as `- <label>: <value>`.
+and `Identity recheck`, each exactly once visibly as `- <label>: <value>`.
 `Verified` is `YYYY-MM-DD`; `Repository` is the exact resolved target root;
-`VCS` is `git`, `git-worktree`, `perforce`, or `none`; record the tested native
-SCM revision/checkpoint. Git adapter: `Revision / checkpoint` is a full 40-hex
-implementation commit; commit the feature slice before recording evidence, then
-commit only lifecycle/evidence bookkeeping separately. Normal Git completion
-creates no snapshot, projection, content-object, or `evidence/` folder. Only
-fallback dirty Git, Perforce, or no-VCS identity adds
-`Fallback reason`, `Evidence exclusions`, `Governing intent`, `Ignored inputs`,
-`Directory inputs`, and `Content snapshot`; dirty Git uses a full base suffixed
-`-dirty`. `Fallback reason` names the specific VCS or authorization constraint.
-Perforce and no-SCM planning roots may retain fallback handoff evidence but have
-no validated durable lifecycle adapter, so they must remain non-complete.
-`Governing intent` uses `<64-hex SHA-256> at <durable path>; inputs:
-<comma-separated artifact paths and decision ids>`. `Ignored inputs` and
-`Directory inputs` use
-`none with <inspection basis>` or
-`paths: <comma-separated repository-relative paths>; <digests/basis>`.
+`VCS` identifies a validated SCM adapter; record the tested native SCM
+ revision/checkpoint. Git adapter: phase `Revision / checkpoint` is a full
+ 40-hex native Git commit and may be a validated integration merge. The
+ non-merge rule applies only to atomic task implementation evidence; commit the
+ feature slice before recording evidence, then commit only lifecycle/evidence
+ bookkeeping separately. Dirty Git, no-SCM, and unsupported SCM adapters remain
+ non-complete.
 The exact table columns are
 `Command | Working directory | Result | Observable evidence` or
 `Tool / inspection | Context | Result | Observable evidence`. Command results
 use `PASS (exit 0)`; tool/inspection results use `PASS`. `Identity recheck`
 names the tool, an ISO date/time through minutes, and a matched/matching
-identity. Follow shared/completion-evidence.md for identity, rollup, review
+identity. Follow shared/completion-evidence.md for identity, concise child
 gate, and durability rules. On phase completion, add `- Final aligned review:
 <persisted review artifact path>; frozen: <revision/range>` for the final
-`Aligned`, four-lane review; `frozen` must exactly equal that review's `rev`.
+`Aligned`, four-lane review exactly once; `frozen` must exactly equal that
+review's `rev`.
 For each completed task, also add `Focused review` in strict syntax: for Git,
 exactly `git show <full40>` for final-commit review or `git diff
 <full40>..<full40>` for range review in backticks before `; complete task diff
@@ -119,5 +107,8 @@ reviewed for correctness, scope, tests, maintainability, and task boundary`, the
 the task full commit or `diff: <full40>..<full40>` whose distinct base is that
 task commit's direct first parent and whose endpoint is that revision; the
 command has no extra operands), and
-`Review result: PASS/Aligned`. -->
+`Review result: PASS/Aligned`. For a completed phase, add `### Completed task
+identities` with one `- <task id>: <native revision/checkpoint>` line for every
+completed task. Record required independent phase rows; do not add child-evidence
+rollup sections. -->
 Pending — not complete.

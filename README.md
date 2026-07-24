@@ -33,9 +33,9 @@ steps inside it (D-0014, D-0015). Every completed task receives a focused review
 of its complete diff before its revision is finalized, and lifecycle recording
 preserves its complete state. **Git adapter:** `sdd-implement` verifies and
 commits that slice before recording evidence against the immutable feature
-commit, then commits lifecycle bookkeeping separately. Dirty snapshots and
-content-object evidence folders are fallback identity mechanisms, not a reason
-to leave ordinary completed implementation uncommitted (D-0011).
+commit, then commits lifecycle bookkeeping separately. Native SCM is the sole
+source identity: dirty Git, no-SCM, and unsupported SCM adapters cannot mark
+work complete (D-0018).
 
 Phase completion freezes a concrete revision/range and requires a persisted
 `Aligned` run of all four `sdd-code-review` lanes. Needs changes or Blocked

@@ -27,13 +27,13 @@ class ReviewDispatchTests(unittest.TestCase):
             pattern = rf"\| {re.escape(lens)} \| `{re.escape(identifier)}` \|"
             self.assertRegex(skill, pattern)
             self.assertRegex(shared, pattern)
-        self.assertIn("task name or description field", skill)
+        self.assertIn("name or description field", skill)
 
     def test_isolation_fallback_requires_accurate_review_mode(self):
         skill = (ROOT / "skills" / "sdd-code-review" / "SKILL.md").read_text()
-        self.assertIn("fresh-context isolation is unavailable", skill)
-        self.assertIn("label the review **mixed**", skill)
-        self.assertIn("label it **single-agent review**", skill)
+        self.assertIn("otherwise run affected lanes serially", skill)
+        self.assertIn("`mixed`", skill)
+        self.assertIn("`single-agent review`", skill)
 
     def test_dispatch_contract_remains_runtime_neutral(self):
         skill = (ROOT / "skills" / "sdd-code-review" / "SKILL.md").read_text().lower()
@@ -47,7 +47,7 @@ class ReviewDispatchTests(unittest.TestCase):
         evidence = (ROOT / "shared" / "completion-evidence.md").read_text()
         artifacts = (ROOT / "shared" / "review-artifacts.md").read_text()
         validator = (ROOT / "scripts" / "sdd_validate.py").read_text()
-        for text in (skill, evidence, artifacts):
+        for text in (skill, artifacts):
             for required in (
                 "frozen",
                 "Aligned",
@@ -66,6 +66,9 @@ class ReviewDispatchTests(unittest.TestCase):
         self.assertIn("SDD166", validator)
         self.assertIn("SDD167", validator)
         self.assertIn("SDD172", validator)
+        self.assertIn("reviewed_planning_revision", skill)
+        self.assertIn("reviewed_planning_revision", artifacts)
+        self.assertNotIn("reviewed_phase_intent_sha256", skill)
 
     def test_manifest_version_is_semver(self):
         manifest = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text())

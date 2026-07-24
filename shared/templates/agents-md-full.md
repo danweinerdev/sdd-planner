@@ -33,8 +33,8 @@ This repository keeps spec-driven development artifacts under `{{PLANNING_ROOT}}
   commands/tools, context, revision/checkpoint, result, and observable evidence
   before any `complete` transition; prospective verification criteria are not
   proof. **Git adapter:** commit the verified feature slice first and commit the
-  lifecycle/evidence bookkeeping separately; do not generate dirty snapshot
-  folders merely because bookkeeping is still pending.
+  lifecycle/evidence bookkeeping separately; dirty or no-SCM work remains
+  non-complete until a durable native checkpoint exists.
 - Use `planning-config.json` to resolve the planning root and any externally targeted repository paths. There is no local companion config.
 - Consult the plugin's frontmatter schema, templates, and language-verification references when creating or changing artifacts.
 

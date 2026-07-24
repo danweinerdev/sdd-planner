@@ -69,11 +69,11 @@ or `single-agent`. Its `lane_results` is exactly four mappings, one for every
 stable lane: `review_plan_drift`, `review_quality`, `review_spec_compliance`,
 and `review_blind_spots`. Each mapping has `lane`, `result: PASS/Aligned`,
 `reviewed_identity` exactly equal to the review's `rev`, and nonempty `evidence`.
-It also requires `reviewed_phase_intent_sha256` and
-`reviewed_plan_intent_sha256`: lowercase SHA-256 digests of the canonical
-`project_artifact` projections captured at review time. These bind the gate to
-the reviewed phase and plan README intent while excluding lifecycle-only fields.
-The complete example and Git-specific frozen-identity adapter are in
+It also requires `reviewed_planning_revision`: the full planning-Git commit at
+which the phase and plan README were reviewed. The validator loads both artifacts
+at that native revision and compares lifecycle-normalized content to the current
+artifacts, allowing lifecycle-only changes. The complete example and Git-specific
+frozen-identity adapter are in
 `shared/review-artifacts.md`.
 
 ## Decision Ledger Schema

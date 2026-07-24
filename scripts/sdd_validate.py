@@ -4,16 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import datetime as dt
-import hashlib
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
-from urllib.parse import unquote, unquote_to_bytes, urlparse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -25,6 +21,7 @@ except ImportError:
 
 try:
     import yaml
+    from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 except ImportError:
     print(
         "sdd-validate: PyYAML is required; install it with "
@@ -53,7 +50,6 @@ DECISION_STATUS = {"proposed", "accepted", "rejected", "superseded"}
 ARTIFACT_DIRS = ("Research", "Brainstorm", "Specs", "Designs", "Plans", "Decisions", "Retro", "Diagrams")
 COMMON_FIELDS = ("title", "type", "status", "created", "updated")
 PENDING = "Pending — not complete."
-SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
 IDS = {
     "FR": re.compile(r"\bFR-(\d{2,})\b"),
     "NFR": re.compile(r"\bNFR-(\d{2,})\b"),
@@ -186,18 +182,6 @@ class Validator:
             self._planning_root_scm_name = detected_scm(self.root)
         return self._planning_root_scm_name
 
-    def _capture_path(self, artifact: Artifact, recorded: str) -> Path:
-        value = Path(recorded)
-        if value.is_absolute():
-            return value.resolve()
-        repository_candidate = (self._repo_for_artifact(artifact) / value).resolve()
-        planning_candidate = (self.root / value).resolve()
-        try:
-            repository_candidate.relative_to(self.root)
-            return repository_candidate
-        except ValueError:
-            return planning_candidate
-
     def run(self) -> list[Diagnostic]:
         self._discover()
         self._legacy_layouts()
@@ -249,7 +233,7 @@ class Validator:
     def _parse(self, path: Path, rel_override: str | None = None) -> Artifact | None:
         rel = rel_override or path.relative_to(self.root).as_posix()
         try:
-            source = path.read_text(encoding="utf-8")
+            source = path.read_bytes().decode("utf-8")
         except (OSError, UnicodeError) as exc:
             self.error(None, "SDD002", f"Cannot read UTF-8 artifact: {exc}", "Store the artifact as readable UTF-8.", path=rel)
             return None
@@ -306,7 +290,7 @@ class Validator:
     def sections(self, artifact: Artifact, level: int = 2) -> dict[str, tuple[int, str]]:
         lines = markdown_lines(artifact.body)
         matches: list[tuple[int, str]] = []
-        pattern = re.compile(rf"^{'#' * level}\s+(.+?)\s*$")
+        pattern = re.compile(rf"^ {{0,3}}{'#' * level}\s+(.+?)\s*$")
         for index, (_, visible) in enumerate(lines):
             match = pattern.match(visible.rstrip("\r\n"))
             if match:
@@ -315,7 +299,7 @@ class Validator:
         for index, (start, heading) in enumerate(matches):
             end = matches[index + 1][0] if index + 1 < len(matches) else len(lines)
             line = artifact.body_line + start
-            result[heading] = (line, "".join(raw for raw, _ in lines[start + 1 : end]))
+            result[heading] = (line, "".join(visible for _, visible in lines[start + 1 : end]))
         return result
 
     def _headings(self, artifact: Artifact) -> None:
@@ -324,8 +308,31 @@ class Validator:
             if heading not in sections:
                 self.error(artifact, "SDD020", f"Required section `## {heading}` is missing.", f"Add a nonempty `## {heading}` section.")
         if artifact.kind in {"plan", "phase"}:
+            visible = visible_markdown(artifact.body)
+            legacy = re.search(
+                r"^ {0,3}#{3}[ \t]+.*\bEvidence[ \t]+Rollup\b(?:[ \t]+#+)?[ \t]*$",
+                visible,
+                re.MULTILINE | re.IGNORECASE,
+            )
+            if legacy:
+                self.error(
+                    artifact,
+                    "SDD158" if artifact.kind == "plan" else "SDD157",
+                    "Legacy `Evidence Rollup` headings are not permitted.",
+                    "Replace the rollup with the required concise completed-identity section.",
+                    artifact.body_line + visible[: legacy.start()].count("\n"),
+                )
             heading = "Plan Completion Evidence" if artifact.kind == "plan" else "Phase Completion Evidence"
-            if heading in sections:
+            evidence_sections = heading_bodies(artifact.body, 2, heading)
+            if len(evidence_sections) > 1:
+                self.error(
+                    artifact,
+                    "SDD020",
+                    f"Parent completion-evidence section `## {heading}` is duplicated.",
+                    f"Keep exactly one visible `## {heading}` section.",
+                    artifact.line(f"## {heading}", True),
+                )
+            elif len(evidence_sections) == 1:
                 self._evidence(artifact, artifact.status, heading, *sections[heading])
 
     def _index(self) -> None:
@@ -572,7 +579,7 @@ class Validator:
         for value in duplicates(ids):
             self.error(artifact, "SDD060", f"Duplicate phase id `{value}`.", "Assign a unique append-only phase id.")
         if artifact.status == "complete":
-            self._plan_rollup(artifact, phases)
+            self._plan_phase_identities(artifact, phases)
 
     def _phase(self, artifact: Artifact) -> None:
         self._required(artifact, ("plan", "phase", "deliverable"))
@@ -580,6 +587,14 @@ class Validator:
         if not isinstance(tasks, list):
             self.error(artifact, "SDD061", "`tasks` must be a list.", "Use `tasks: []` when empty.")
             return
+        self._task_completion_evidence_structure(
+            artifact,
+            [
+                task["id"]
+                for task in tasks
+                if isinstance(task, dict) and isinstance(task.get("id"), str)
+            ],
+        )
         sections = self.sections(artifact)
         phase_id = str(artifact.meta.get("phase", ""))
         task_evidence: dict[str, str] = {}
@@ -601,19 +616,22 @@ class Validator:
                 continue
             line, body = sections[heading]
             for required in ("Subtasks", "Notes", "Completion Evidence"):
-                if not re.search(rf"^###\s+{re.escape(required)}\s*$", body, re.MULTILINE):
+                if not re.search(rf"^ {{0,3}}###\s+{re.escape(required)}\s*$", body, re.MULTILINE):
                     self.error(artifact, "SDD067", f"Task `{task_id}` is missing `### {required}`.", f"Add it inside the task section.", line)
             evidence_blocks = heading_bodies(body, 3, "Completion Evidence")
-            if len(evidence_blocks) > 1:
-                self.error(artifact, "SDD067", f"Task `{task_id}` has duplicate visible `### Completion Evidence` sections.", "Keep exactly one Completion Evidence section inside the task.", line)
             if len(evidence_blocks) == 1:
                 value = evidence_blocks[0]
                 task_evidence[task_id] = no_comments(value).strip()
                 self._evidence(artifact, str(task.get("status", "")), f"Task {task_id} Completion Evidence", line, value)
+            subtasks = heading_bodies(body, 3, "Subtasks")
+            if len(subtasks) > 1:
+                self.error(artifact, "SDD067", f"Task `{task_id}` has duplicate visible `### Subtasks` sections.", "Keep exactly one Subtasks section inside the task.", line)
+            if task.get("status") == "complete" and len(subtasks) == 1 and has_unchecked_checkbox(subtasks[0]):
+                self.error(artifact, "SDD069", f"Complete task `{task_id}` has unchecked subtasks.", "Verify and check every subtask.", line)
             if artifact.status == "complete" and task.get("status") != "complete":
                 self.error(artifact, "SDD068", f"Complete phase contains incomplete task `{task_id}`.", "Complete every task first.")
         criteria = sections.get("Acceptance Criteria")
-        if artifact.status == "complete" and criteria and re.search(r"^-\s*\[\s\]", criteria[1], re.MULTILINE):
+        if artifact.status == "complete" and criteria and has_unchecked_checkbox(criteria[1]):
             self.error(artifact, "SDD069", "Complete phase has unchecked acceptance criteria.", "Verify and check every criterion.", criteria[0])
         if artifact.status == "complete":
             phase_evidence = sections.get("Phase Completion Evidence")
@@ -625,20 +643,52 @@ class Validator:
                 self._phase_final_review(
                     artifact, rollup, phase_evidence[0], task_identities
                 )
-                for task in tasks:
-                    if not isinstance(task, dict) or task.get("status") != "complete":
-                        continue
-                    task_id = str(task.get("id", ""))
-                    evidence = task_evidence.get(task_id, "").strip()
-                    copied = rollup_bodies(rollup, f"Task {task_id} Evidence Rollup")
-                    if not evidence or len(copied) != 1 or copied[0].strip() != evidence:
-                        self.error(
-                            artifact,
-                            "SDD157",
-                            f"Phase completion evidence does not contain the verbatim evidence rollup for task `{task_id}`.",
-                            f"Add `### Task {task_id} Evidence Rollup` and repeat its populated Completion Evidence body verbatim.",
-                            phase_evidence[0],
-                        )
+                expected = {
+                    str(task.get("id", "")): markdown_scalar(
+                        evidence_value(task_evidence.get(str(task.get("id", "")), ""), "Revision / checkpoint")
+                    )
+                    for task in tasks
+                    if isinstance(task, dict) and task.get("status") == "complete"
+                }
+                self._completed_identities(
+                    artifact,
+                    rollup,
+                    "Completed task identities",
+                    expected,
+                    phase_evidence[0],
+                    "task",
+                )
+
+    def _task_completion_evidence_structure(
+        self, artifact: Artifact, task_ids: Sequence[str]
+    ) -> None:
+        """Require task evidence headings to belong to one declared task section."""
+        lines = markdown_lines(artifact.body)
+        sections = declared_task_completion_evidence_sections(lines, task_ids)
+        contained = {start for _, start, _ in sections}
+        marker = re.compile(r"^ {0,3}###\s+Completion Evidence\s*$")
+        for index, (_, visible) in enumerate(lines):
+            if marker.match(visible.rstrip("\r\n")) and index not in contained:
+                self.error(
+                    artifact,
+                    "SDD067",
+                    "Visible `### Completion Evidence` is outside a declared task section.",
+                    "Keep Completion Evidence only inside the matching declared `## <task-id>` section.",
+                    artifact.body_line + index,
+                )
+        counts: dict[str, int] = {}
+        for task_id, _, _ in sections:
+            counts[task_id] = counts.get(task_id, 0) + 1
+        for task_id, count in counts.items():
+            if count > 1:
+                first = next(start for found_id, start, _ in sections if found_id == task_id)
+                self.error(
+                    artifact,
+                    "SDD067",
+                    f"Task `{task_id}` has duplicate visible `### Completion Evidence` sections.",
+                    "Keep exactly one Completion Evidence section inside the task.",
+                    artifact.body_line + first,
+                )
 
     def _phase_task_git_identities(
         self,
@@ -669,7 +719,7 @@ class Validator:
                 phase,
                 "SDD172",
                 f"Git phase review range cannot validate completed task `{task_id}` identity `{revision}` with VCS `{vcs}` because no deterministic task-identity adapter is available.",
-                "Record a clean full Git implementation commit for every completed task, or keep the phase non-complete until a deterministic adapter for the task identity is available.",
+                "Record a clean full native Git revision/checkpoint in every completed task's evidence, or keep the phase non-complete until a deterministic adapter for the task identity is available.",
                 line,
             )
         return identities
@@ -683,14 +733,15 @@ class Validator:
     ) -> None:
         """Validate the durable, frozen all-lane review gate for phase closure."""
         target_is_git = self._phase_review_identity_adapter_available(artifact, line)
-        value = markdown_scalar(evidence_value(body, "Final aligned review"))
+        final_review_values = evidence_values(body, "Final aligned review")
+        value = markdown_scalar(final_review_values[0] if len(final_review_values) == 1 else None)
         parsed = parse_final_aligned_review(value)
         if parsed is None:
             self.error(
                 artifact,
                 "SDD166",
-                "Complete phase lacks a valid `Final aligned review` entry.",
-                "Use `- Final aligned review: <review artifact path>; frozen: <exact revision/range>`.",
+                "Complete phase must contain exactly one valid visible `Final aligned review` entry.",
+                "Keep one `- Final aligned review: <review artifact path>; frozen: <exact revision/range>` line outside comments and fenced blocks.",
                 line,
             )
             return
@@ -713,7 +764,7 @@ class Validator:
                 "Use the exact nonempty review `rev` after `frozen:` in the Final aligned review entry.",
                 line,
             )
-        self._verify_phase_review_intent_digests(artifact, review, line)
+        self._verify_phase_review_planning_revision(artifact, review, line)
         if target_is_git:
             self._verify_phase_review_identity(
                 artifact, body, frozen, line, task_identities
@@ -762,8 +813,8 @@ class Validator:
             self.error(
                 phase,
                 "SDD173",
-                "Git phase completion requires `Revision / checkpoint` to be one clean full 40-hex commit.",
-                "Record the exact full Git implementation commit as `Revision / checkpoint`; do not use a dirty or fallback identity.",
+                "Git phase completion requires `Revision / checkpoint` to be one clean full native Git revision/checkpoint.",
+                "Record the exact full native Git revision/checkpoint as `Revision / checkpoint`; a validated integration merge is allowed, but do not use a dirty or fallback identity.",
                 line,
             )
             return
@@ -791,7 +842,7 @@ class Validator:
                 phase,
                 "SDD173",
                 f"Git phase review endpoint `{identities[-1]}` does not equal phase `Revision / checkpoint` `{checkpoint}`.",
-                "Review the final implementation commit or use a range whose endpoint is that exact checkpoint.",
+                "Review the final phase revision/checkpoint or use a range whose endpoint is that exact checkpoint; a validated integration merge is allowed.",
                 line,
             )
         for identity in identities:
@@ -824,8 +875,8 @@ class Validator:
                 self.error(
                     phase,
                     "SDD173",
-                    f"Completed task `{task_id}` implementation commit `{revision}` does not exist in target repository `{repository}`.",
-                    "Record an existing clean Git task implementation commit before completing the phase.",
+                    f"Completed task `{task_id}` evidence revision/checkpoint `{revision}` does not exist in target repository `{repository}`.",
+                    "Record an existing clean full native Git revision/checkpoint in the completed task's evidence before completing the phase.",
                     line,
                 )
                 continue
@@ -838,8 +889,8 @@ class Validator:
                 self.error(
                     phase,
                     "SDD173",
-                    f"Git phase review range `{frozen}` omits completed task `{task_id}` implementation commit `{revision}` because it is not an ancestor of the endpoint.",
-                    "Use a frozen range whose endpoint descends from every completed task implementation commit.",
+                    f"Git phase review range `{frozen}` omits completed task `{task_id}` evidence revision/checkpoint `{revision}` because it is not an ancestor of the endpoint.",
+                    "Use a frozen range whose endpoint descends from every completed task evidence revision/checkpoint.",
                     line,
                 )
                 continue
@@ -852,8 +903,8 @@ class Validator:
                 self.error(
                     phase,
                     "SDD173",
-                    f"Git phase review range `{frozen}` omits completed task `{task_id}` implementation commit `{revision}` because it is at or before the range base.",
-                    "Move the frozen range base before every completed task implementation commit.",
+                    f"Git phase review range `{frozen}` omits completed task `{task_id}` evidence revision/checkpoint `{revision}` because it is at or before the range base.",
+                    "Move the frozen range base before every completed task evidence revision/checkpoint.",
                     line,
                 )
 
@@ -870,111 +921,317 @@ class Validator:
             and not phase_review_schema_errors(review.meta)
         )
 
-    def _verify_phase_review_intent_digests(
+    def _verify_phase_review_planning_revision(
         self, phase: Artifact, review: Artifact, line: int
     ) -> None:
-        """Bind a phase gate to the current normalized phase and plan intent."""
+        """Bind the phase gate to lifecycle-normalized planning artifacts in Git."""
         plan_name = self._plan_name(phase)
         plan = self.by_path.get(f"Plans/{plan_name}/README.md") if plan_name else None
         if plan is None:
             self.error(
                 phase,
                 "SDD174",
-                "Phase review cannot validate its plan README intent projection.",
+                "Phase review cannot validate its plan README at the reviewed planning revision.",
                 "Ensure the reviewed phase belongs to a discoverable plan README before completing the phase.",
                 line,
             )
             return
-        for field, artifact, label in (
-            ("reviewed_phase_intent_sha256", phase, "phase"),
-            ("reviewed_plan_intent_sha256", plan, "plan README"),
-        ):
-            recorded = review.meta.get(field)
-            if not isinstance(recorded, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded):
-                continue
-            current = hashlib.sha256(project_artifact(artifact)).hexdigest()
-            if recorded != current:
+        repository = git_worktree_root(self.root)
+        if repository is None:
+            self.error(
+                phase,
+                "SDD174",
+                "Phase review requires a Git planning-root lifecycle adapter.",
+                "Keep the phase non-complete until the planning root is a Git worktree.",
+                line,
+            )
+            return
+        revision = review.meta.get("reviewed_planning_revision")
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+            return
+        if not git_commit_exists(repository, revision):
+            self.error(
+                phase,
+                "SDD174",
+                f"Final review `{review.rel}` planning revision `{revision}` does not exist in planning Git history.",
+                "Record an existing full planning Git commit in `reviewed_planning_revision`.",
+                line,
+            )
+            return
+        if self.identity_mode != "historical":
+            ancestor = subprocess.run(
+                ["git", "-C", str(repository), "merge-base", "--is-ancestor", revision, "HEAD"],
+                check=False,
+                capture_output=True,
+            )
+            if ancestor.returncode != 0:
                 self.error(
                     phase,
                     "SDD174",
-                    f"Final review `{review.rel}` {label} intent digest does not match the current canonical projection.",
-                    f"Rerun the four-lane review and record the current `{field}` after the reviewed intent is finalized.",
+                    f"Final review `{review.rel}` planning revision `{revision}` is not an ancestor of planning HEAD.",
+                    "Use a reviewed planning revision retained by the current planning Git history.",
                     line,
                 )
+                return
+        for current, label in ((phase, "phase"), (plan, "plan README")):
+            try:
+                relative = current.path.resolve().relative_to(repository).as_posix()
+            except ValueError:
+                self.error(
+                    phase,
+                    "SDD174",
+                    f"Final review `{review.rel}` cannot load {label} outside the planning Git worktree.",
+                    "Store phase and plan lifecycle artifacts under the planning root.",
+                    line,
+                )
+                continue
+            historical = self._git_lifecycle_normalized_artifact(repository, revision, relative, current.kind)
+            if historical is None:
+                self.error(
+                    phase,
+                    "SDD174",
+                    f"Final review `{review.rel}` cannot load {label} at planning revision `{revision}`.",
+                    "Review a planning commit that contains the current phase and plan README.",
+                    line,
+                )
+            elif self.identity_mode != "historical":
+                try:
+                    current_normalized = lifecycle_normalized_artifact(current)
+                except ValueError:
+                    self.error(
+                        phase,
+                        "SDD174",
+                        f"Final review `{review.rel}` cannot normalize current lifecycle {label} content.",
+                        "Use block-style single-line lifecycle fields before completing the phase review.",
+                        line,
+                    )
+                    continue
+                if historical != current_normalized:
+                    self.error(
+                        phase,
+                        "SDD174",
+                        f"Final review `{review.rel}` does not match current lifecycle-normalized {label} content.",
+                        "Rerun the four-lane review after changing phase or plan intent.",
+                        line,
+                    )
 
-    def _plan_rollup(self, artifact: Artifact, phases: list[Any]) -> None:
+    def _plan_phase_identities(self, artifact: Artifact, phases: list[Any]) -> None:
         plan_evidence = self.sections(artifact).get("Plan Completion Evidence")
         if not plan_evidence:
             return
-        rollup = plan_evidence[1]
+        expected: dict[str, str | None] = {}
         for phase in phases:
-            if not isinstance(phase, dict) or not isinstance(phase.get("doc"), str):
+            if not isinstance(phase, dict) or phase.get("status") != "complete" or not isinstance(phase.get("doc"), str):
                 continue
             phase_id = str(phase.get("id", ""))
             target = self.by_path.get((Path(artifact.rel).parent / phase["doc"]).as_posix())
             if not target:
                 continue
-            missing: list[str] = []
             sections = self.sections(target)
             phase_body = sections.get("Phase Completion Evidence", (1, ""))[1]
-            phase_rollups = rollup_bodies(rollup, f"Phase {phase_id} Evidence Rollup")
-            if len(phase_rollups) != 1:
-                missing.append(f"phase {phase_id} rollup")
-            elif evidence_rows(phase_rollups[0]) != evidence_rows(phase_body):
-                missing.append(f"phase {phase_id} evidence rows")
-            tasks = target.meta.get("tasks", [])
-            if isinstance(tasks, list):
-                for task in tasks:
-                    if not isinstance(task, dict):
-                        continue
-                    task_id = str(task.get("id", ""))
-                    heading = next((name for name in sections if re.match(rf"^{re.escape(task_id)}(?:\s*:|\s|$)", name)), None)
-                    task_body = sections[heading][1] if heading else ""
-                    evidence = completion_evidence_body(task_body)
-                    task_rollups = rollup_bodies(rollup, f"Task {task_id} Evidence Rollup")
-                    if len(task_rollups) != 1:
-                        missing.append(f"task {task_id} rollup")
-                    elif evidence_rows(task_rollups[0]) != evidence_rows(evidence or ""):
-                        missing.append(f"task {task_id} evidence rows")
-            if missing:
+            review = parse_final_aligned_review(markdown_scalar(evidence_value(phase_body, "Final aligned review")))
+            expected[phase_id] = (
+                markdown_scalar(evidence_value(phase_body, "Revision / checkpoint")),
+                review[0] if review else None,
+            )
+        self._completed_identities(
+            artifact,
+            plan_evidence[1],
+            "Completed phase identities",
+            expected,
+            plan_evidence[0],
+            "phase",
+        )
+        self._verify_git_plan_phase_checkpoints(
+            artifact, phases, plan_evidence[1], plan_evidence[0]
+        )
+
+    def _verify_git_plan_phase_checkpoints(
+        self, plan: Artifact, phases: list[Any], body: str, line: int
+    ) -> None:
+        """Bind completed phase Git checkpoints to the plan checkpoint."""
+        plan_vcs = markdown_scalar(evidence_value(body, "VCS"))
+        if plan_vcs not in {"git", "git-worktree"}:
+            return
+        plan_checkpoint = markdown_scalar(
+            evidence_value(body, "Revision / checkpoint")
+        )
+        repository = self._repo_for_artifact(plan)
+        if detected_scm(repository) != "git":
+            self.error(
+                plan,
+                "SDD175",
+                f"Git plan evidence targets `{repository}`, which has no Git identity adapter.",
+                "Record plan Git evidence only for its Git target repository.",
+                line,
+            )
+            return
+        if not plan_checkpoint or not re.fullmatch(r"[0-9a-fA-F]{40}", plan_checkpoint):
+            self.error(
+                plan,
+                "SDD175",
+                "Git plan completion requires a full native Git `Revision / checkpoint`.",
+                "Record the target repository's exact full native Git revision/checkpoint; a validated integration merge is allowed.",
+                line,
+            )
+            return
+        if not git_commit_exists(repository, plan_checkpoint):
+            self.error(
+                plan,
+                "SDD175",
+                f"Plan Git checkpoint `{plan_checkpoint}` does not exist in target repository `{repository}`.",
+                "Record an existing target-repository Git checkpoint.",
+                line,
+            )
+            return
+        for phase_entry in phases:
+            if (
+                not isinstance(phase_entry, dict)
+                or phase_entry.get("status") != "complete"
+                or not isinstance(phase_entry.get("doc"), str)
+            ):
+                continue
+            phase_id = str(phase_entry.get("id", ""))
+            phase = self.by_path.get(
+                (Path(plan.rel).parent / phase_entry["doc"]).as_posix()
+            )
+            if phase is None:
+                continue
+            phase_repository = self._repo_for_artifact(phase)
+            if phase_repository.resolve() != repository.resolve():
                 self.error(
-                    artifact,
-                    "SDD158",
-                    f"Plan completion evidence omits {', '.join(sorted(set(missing)))}.",
-                    "Add labeled phase/task Evidence Rollup blocks and repeat each child's exact command/tool evidence rows.",
-                    plan_evidence[0],
+                    plan,
+                    "SDD175",
+                    f"Completed phase `{phase_id}` targets `{phase_repository}`, not plan target `{repository}`; cross-repository checkpoint ordering is unsupported.",
+                    "Keep all completed phase and plan Git checkpoints in one target repository.",
+                    line,
+                )
+                continue
+            phase_body = self.sections(phase).get("Phase Completion Evidence", (1, ""))[1]
+            phase_vcs = markdown_scalar(evidence_value(phase_body, "VCS"))
+            phase_checkpoint = markdown_scalar(
+                evidence_value(phase_body, "Revision / checkpoint")
+            )
+            if phase_vcs not in {"git", "git-worktree"}:
+                self.error(
+                    plan,
+                    "SDD175",
+                    f"Completed phase `{phase_id}` VCS `{phase_vcs or 'missing'}` is incompatible with Git plan evidence.",
+                    "Record a Git/git-worktree phase checkpoint in the plan target repository.",
+                    line,
+                )
+                continue
+            if not phase_checkpoint or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", phase_checkpoint
+            ):
+                self.error(
+                    plan,
+                    "SDD175",
+                    f"Completed phase `{phase_id}` lacks a full native Git revision/checkpoint for Git plan evidence.",
+                    "Record the phase's exact full native Git revision/checkpoint; a validated integration merge is allowed.",
+                    line,
+                )
+                continue
+            if not git_commit_exists(repository, phase_checkpoint):
+                self.error(
+                    plan,
+                    "SDD175",
+                    f"Completed phase `{phase_id}` Git checkpoint `{phase_checkpoint}` does not exist in target repository `{repository}`.",
+                    "Record an existing phase Git checkpoint in the plan target repository.",
+                    line,
+                )
+                continue
+            ancestor = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "merge-base",
+                    "--is-ancestor",
+                    phase_checkpoint,
+                    plan_checkpoint,
+                ],
+                check=False,
+                capture_output=True,
+            )
+            if ancestor.returncode != 0:
+                self.error(
+                    plan,
+                    "SDD175",
+                    f"Completed phase `{phase_id}` Git checkpoint `{phase_checkpoint}` is not an ancestor of plan checkpoint `{plan_checkpoint}`.",
+                    "Record a plan checkpoint equal to or descending from every completed phase checkpoint.",
+                    line,
                 )
 
+    def _completed_identities(
+        self,
+        artifact: Artifact,
+        body: str,
+        heading: str,
+        expected: dict[str, Any],
+        line: int,
+        kind: str,
+    ) -> None:
+        """Require one visible concise identity entry for every completed child."""
+        sections = heading_bodies(body, 3, heading)
+        invalid = len(sections) != 1
+        entries: dict[str, Any] = {}
+        if len(sections) == 1:
+            pattern = (
+                r"\s*-\s+`(?P<identity>[^`\s]+)`: `(?P<checkpoint>[^`;]+)`\s*"
+                if kind == "task"
+                else r"\s*-\s+`(?P<identity>[^`\s]+)`: `(?P<checkpoint>[^`;]+)`; review: `(?P<review>[^`;]+)`\s*"
+            )
+            for value in sections[0].splitlines():
+                match = re.fullmatch(pattern, value)
+                if not match:
+                    invalid = True
+                    continue
+                identity = match.group("identity")
+                recorded: Any = (
+                    (match.group("checkpoint"), match.group("review"))
+                    if kind == "phase"
+                    else match.group("checkpoint")
+                )
+                if identity in entries:
+                    invalid = True
+                entries[identity] = recorded
+        if set(entries) != set(expected) or any(entries.get(identity) != value for identity, value in expected.items()):
+            invalid = True
+        if invalid:
+            self.error(
+                artifact,
+                "SDD157" if kind == "task" else "SDD158",
+                f"{heading} must contain one exact identity entry for every completed {kind}.",
+                f"Use exactly one `### {heading}` section with each completed {kind}'s checkpoint" + (" and final review path." if kind == "phase" else "."),
+                line,
+            )
+
     def _evidence(self, artifact: Artifact, status: str, name: str, line: int, body: str) -> None:
-        pending = PENDING in body
+        visible_body = visible_markdown(body)
+        pending = PENDING in visible_body
         if status == "complete" and pending:
             self.error(artifact, "SDD070", f"Complete `{name}` is pending.", "Replace the marker with retrospective evidence.", line)
             return
         if pending:
             return
-        labels = ("Verified", "Repository", "VCS", "Identity recheck")
+        labels = ("Verified", "Repository", "VCS", "Revision / checkpoint", "Identity recheck")
         for label in labels:
-            if not re.search(rf"^\s*-\s+{re.escape(label)}:\s*\S", body, re.MULTILINE):
-                self.error(artifact, "SDD071", f"`{name}` lacks `{label}`.", f"Add populated `{label}` evidence.", line)
-        if not (
-            re.search(r"^\s*-\s+Revision / checkpoint:\s*\S", body, re.MULTILINE)
-            or re.search(r"^\s*-\s+Revision / base:\s*\S", body, re.MULTILINE)
-        ):
-            self.error(artifact, "SDD071", f"`{name}` lacks `Revision / checkpoint`.", "Add populated native SCM revision/checkpoint evidence.", line)
+            values = evidence_values(body, label)
+            if len(values) != 1 or not markdown_scalar(values[0] if values else None):
+                self.error(artifact, "SDD071", f"`{name}` must contain exactly one populated visible `{label}` label.", f"Keep one populated `{label}` evidence line outside comments and fenced blocks.", line)
         verified = markdown_scalar(evidence_value(body, "Verified"))
         if verified and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", verified):
             self.error(artifact, "SDD072", f"`{name}` has invalid verification date `{verified}`.", "Use YYYY-MM-DD.", line)
         vcs = markdown_scalar(evidence_value(body, "VCS")) or ""
         if vcs and vcs not in {"git", "git-worktree", "perforce", "none"}:
             self.error(artifact, "SDD072", f"`{name}` has invalid VCS `{vcs}`.", "Use git, git-worktree, perforce, or none.", line)
-        revision = markdown_scalar(
-            evidence_value(body, "Revision / checkpoint") or evidence_value(body, "Revision / base")
-        ) or ""
+        revision = markdown_scalar(evidence_value(body, "Revision / checkpoint")) or ""
         task_match = re.fullmatch(r"Task\s+(\S+)\s+Completion Evidence", name)
         if status == "complete" and task_match:
             self._task_review_evidence(artifact, name, body, revision, vcs, line)
-        if vcs in {"git", "git-worktree"} and revision and not re.fullmatch(r"[0-9a-fA-F]{40}(?:-dirty)?", revision):
-            self.error(artifact, "SDD072", f"`{name}` has invalid Git revision/base `{revision}`.", "Record the full 40-digit revision, optionally followed by `-dirty`.", line)
+        if vcs in {"git", "git-worktree"} and revision and not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+            self.error(artifact, "SDD072", f"`{name}` has invalid Git revision/checkpoint `{revision}`.", "Record exactly one clean full native Git revision/checkpoint.", line)
         if vcs == "none" and revision and revision != "none":
             self.error(artifact, "SDD072", f"`{name}` with VCS `none` has revision/base `{revision}`.", "Use `none`.", line)
         repository = markdown_scalar(evidence_value(body, "Repository"))
@@ -983,35 +1240,16 @@ class Validator:
             recorded_repository = Path(repository).expanduser().resolve()
             if recorded_repository != expected_repository:
                 self.error(artifact, "SDD072", f"`{name}` repository `{recorded_repository}` does not match target `{expected_repository}`.", "Record the exact resolved target repository root.", line)
-        fallback = revision.endswith("-dirty") or vcs in {"perforce", "none"}
-        fallback_labels = ("Fallback reason", "Evidence exclusions", "Governing intent", "Ignored inputs", "Directory inputs", "Content snapshot")
-        if fallback:
-            for label in fallback_labels:
-                if not re.search(rf"^\s*-\s+{re.escape(label)}:\s*\S", body, re.MULTILINE):
-                    self.error(artifact, "SDD071", f"`{name}` fallback identity lacks `{label}`.", f"Add populated `{label}` fallback evidence.", line)
-        exclusions = parse_exclusions(evidence_value(body, "Evidence exclusions")) if fallback else set()
-        ignored_inputs: set[str] = set()
-        directory_inputs: set[str] = set()
-        if fallback:
-            ignored_inputs, ignored_error = parse_inventory_paths(evidence_value(body, "Ignored inputs"))
-            directory_inputs, directory_error = parse_inventory_paths(evidence_value(body, "Directory inputs"))
-            for label, inventory_error in (("Ignored inputs", ignored_error), ("Directory inputs", directory_error)):
-                if inventory_error:
-                    self.error(artifact, "SDD165", f"`{name}` has malformed `{label}`: {inventory_error}", "Use `none with <inspection basis>` or `paths: <comma-separated paths>; <digests/basis>`.", line)
-        governing = evidence_value(body, "Governing intent")
-        snapshot = evidence_value(body, "Content snapshot")
-        if not fallback and any(evidence_value(body, label) for label in fallback_labels):
-            self.error(artifact, "SDD074", f"`{name}` uses fallback capture fields for a clean Git implementation commit.", "Remove snapshot/projection/exclusion fields; the tested commit is the durable source identity.", line)
-        capture_paths = [location for value in (governing, snapshot) if value and (location := digest_location(value)) and not urlparse(location).scheme]
-        if fallback:
-            self._check_exclusions(artifact, exclusions, capture_paths, name, line)
-        recorded_inputs = parse_recorded_inputs(governing) if governing else set()
-        required_inputs = self._required_intent_inputs(artifact) if fallback else set()
-        if fallback and governing and recorded_inputs != required_inputs:
-            self.error(artifact, "SDD076", f"`{name}` governing inputs {sorted(recorded_inputs)} do not match required inputs {sorted(required_inputs)}.", "Regenerate the projection from the plan, governing phase(s), related specs/designs, and cited accepted decisions.", line)
-        if vcs in {"git", "git-worktree"} and revision and not revision.endswith("-dirty"):
+        removed_labels = ("Fallback reason", "Evidence exclusions", "Governing intent", "Ignored inputs", "Directory inputs", "Content snapshot")
+        if any(evidence_value(body, label) is not None for label in removed_labels):
+            self.error(artifact, "SDD074", f"`{name}` uses removed synthetic identity fields.", "Remove fallback, snapshot, exclusion, and inventory labels; record the native SCM checkpoint only.", line)
+        if evidence_value(body, "Revision / base") is not None:
+            self.error(artifact, "SDD074", f"`{name}` uses removed `Revision / base` identity evidence.", "Use only `Revision / checkpoint` with the native SCM identity.", line)
+        if vcs in {"git", "git-worktree"} and revision:
             compare_current = self.identity_mode != "historical"
             self._verify_clean_git_identity(artifact, revision, name, line, compare_current)
+        elif status == "complete":
+            self.error(artifact, "SDD172", f"`{name}` cannot complete with VCS `{vcs or 'missing'}` because no validated native identity adapter is available.", "Keep the entity non-complete until a validated native SCM and lifecycle adapter are available.", line)
         if status == "complete":
             self._verify_evidence_committed(artifact, name, body, line)
         rows = evidence_rows(body)
@@ -1023,67 +1261,41 @@ class Validator:
                     self.error(artifact, "SDD072", f"`{name}` contains non-passing result `{row[2]}`.", "Every required command and inspection row must record PASS.", line)
                 if row_kind == "command" and not re.search(r"\bexit\s+0\b", row[2], re.IGNORECASE):
                     self.error(artifact, "SDD072", f"`{name}` command row lacks explicit `exit 0`.", "Record PASS with the command exit status.", line)
-        if re.search(r"\b(?:FAIL|FAILED|exit\s+[1-9]\d*)\b", body, re.IGNORECASE):
+        if re.search(r"\b(?:FAIL|FAILED|exit\s+[1-9]\d*)\b", visible_body, re.IGNORECASE):
             self.error(artifact, "SDD073", f"`{name}` contains failing evidence.", "Return it to a non-complete status until final checks pass.", line)
-        if governing:
-            self._digest(
-                artifact,
-                name,
-                governing,
-                line,
-                require_inputs=True,
-                capture_kind="intent",
-                expected_inputs=recorded_inputs,
-            )
-        if fallback:
-            if snapshot:
-                self._digest(
-                    artifact,
-                    name,
-                    snapshot,
-                    line,
-                    capture_kind="snapshot",
-                    expected_vcs=vcs,
-                    expected_revision=revision,
-                    expected_exclusions=exclusions,
-                    expected_ignored=ignored_inputs,
-                    expected_directories=directory_inputs,
-                )
-            else:
-                self.error(artifact, "SDD074", f"`{name}` requires a content snapshot.", "Record its SHA-256 and durable manifest path.", line)
-            if status == "complete":
-                for capture in capture_paths:
-                    self._verify_capture_committed(artifact, capture, name, line)
         recheck = evidence_value(body, "Identity recheck") or ""
         if recheck and (
             not re.search(r"\bmatch(?:ed|es|ing)?\b", recheck, re.IGNORECASE)
             or not re.search(r"\b\d{4}-\d{2}-\d{2}[T ][0-2]\d:[0-5]\d", recheck)
         ):
             self.error(artifact, "SDD075", f"`{name}` recheck lacks a timestamped matching result.", "Record the exact tool, ISO timestamp, and matching identity.", line)
-        if vcs in {"git", "git-worktree"} and revision and not revision.endswith("-dirty") and revision.lower() not in recheck.lower():
-            self.error(artifact, "SDD075", f"`{name}` recheck does not name implementation revision `{revision}`.", "Record the exact tested commit in the identity-recheck procedure and result.", line)
+        if vcs in {"git", "git-worktree"} and revision and revision.lower() not in recheck.lower():
+            self.error(artifact, "SDD075", f"`{name}` recheck does not name tested Git revision/checkpoint `{revision}`.", "Record the exact tested Git revision/checkpoint in the identity-recheck procedure and result.", line)
 
     def _task_review_evidence(self, artifact: Artifact, name: str, body: str, revision: str, vcs: str, line: int) -> None:
         """Require a durable, auditable focused review for every complete task."""
-        focused_raw = evidence_value(body, "Focused review")
+        focused_values = evidence_values(body, "Focused review")
+        reviewed_values = evidence_values(body, "Reviewed candidate / final")
+        result_values = evidence_values(body, "Review result")
+        focused_raw = focused_values[0] if len(focused_values) == 1 else None
         focused = markdown_scalar(focused_raw)
-        reviewed = markdown_scalar(evidence_value(body, "Reviewed candidate / final"))
-        result = markdown_scalar(evidence_value(body, "Review result"))
+        reviewed = markdown_scalar(reviewed_values[0] if len(reviewed_values) == 1 else None)
+        result = markdown_scalar(result_values[0] if len(result_values) == 1 else None)
         missing = [
             label
-            for label, value in (
-                ("Focused review", focused),
-                ("Reviewed candidate / final", reviewed),
-                ("Review result", result),
+            for label, values, value in (
+                ("Focused review", focused_values, focused),
+                ("Reviewed candidate / final", reviewed_values, reviewed),
+                ("Review result", result_values, result),
             )
-            if not value
+            if len(values) != 1 or not value
         ]
         if missing:
             self.error(
                 artifact,
                 "SDD169",
-                f"`{name}` lacks auditable focused task-review evidence: {', '.join(missing)}.",
-                "Record the focused complete-task diff review, its exact reviewed candidate/final identity or diff, and `Review result: PASS/Aligned`.",
+                f"`{name}` must contain exactly one populated visible auditable task-review label: {', '.join(missing)}.",
+                "Keep one populated visible Focused review, Reviewed candidate / final, and Review result label.",
                 line,
             )
             return
@@ -1224,15 +1436,14 @@ class Validator:
         if inside.returncode != 0 or inside.stdout.strip() != b"true":
             self.error(artifact, "SDD072", f"`{name}` records Git but `{repository}` is not a Git worktree.", "Correct the repository/VCS evidence.", line)
             return
-        commit = git("cat-file", "-e", f"{revision}^{{commit}}")
-        if commit.returncode != 0:
-            self.error(artifact, "SDD072", f"`{name}` Git revision `{revision}` does not exist in `{repository}`.", "Record an existing full commit revision.", line)
+        if not git_commit_exists(repository, revision):
+            self.error(artifact, "SDD072", f"`{name}` Git revision/checkpoint `{revision}` is not a commit in `{repository}`.", "Record an existing full native Git revision/checkpoint, not a tag or another Git object.", line)
             return
         if not compare_current:
             return
         ancestor = git("merge-base", "--is-ancestor", revision, "HEAD")
         if ancestor.returncode != 0:
-            self.error(artifact, "SDD072", f"`{name}` implementation revision `{revision}` is not an ancestor of current HEAD.", "Check out a descendant containing the completed feature or use historical identity mode for an archival audit.", line)
+            self.error(artifact, "SDD072", f"`{name}` Git revision/checkpoint `{revision}` is not an ancestor of current HEAD.", "Check out a descendant containing the completed entity or use historical identity mode for an archival audit.", line)
 
     def _verify_evidence_committed(self, artifact: Artifact, name: str, body: str, line: int) -> None:
         """Dispatch lifecycle durability checks by planning-root SCM adapter."""
@@ -1305,16 +1516,12 @@ class Validator:
             if heading:
                 committed_body = completion_evidence_body(sections[heading][1])
                 subtasks = heading_bodies(sections[heading][1], 3, "Subtasks")
-                lifecycle_complete = lifecycle_complete and bool(subtasks) and not re.search(
-                    r"^-\s*\[\s\]", subtasks[0], re.MULTILINE
-                )
+                lifecycle_complete = lifecycle_complete and len(subtasks) == 1 and not has_unchecked_checkbox(subtasks[0])
         elif name == "Phase Completion Evidence":
             lifecycle_complete = committed.status == "complete"
             committed_body = next(iter(heading_bodies(committed.body, 2, name)), None)
             criteria = heading_bodies(committed.body, 2, "Acceptance Criteria")
-            lifecycle_complete = lifecycle_complete and bool(criteria) and not re.search(
-                r"^-\s*\[\s\]", criteria[0], re.MULTILINE
-            )
+            lifecycle_complete = lifecycle_complete and bool(criteria) and not has_unchecked_checkbox(criteria[0])
             plan_name = self._plan_name(artifact)
             plan_path = self.root / "Plans" / plan_name / "README.md" if plan_name else None
             plan_repository = git_root(plan_path) if plan_path else None
@@ -1378,7 +1585,9 @@ class Validator:
             self.error(phase, "SDD170", f"Committed final aligned review `{review.rel}` does not establish resolved frozen Aligned four-lane review state for `{frozen}`.", "Commit frontmatter with review_of, rev, review_scope: phase, frozen: true, verdict: Aligned, all four lanes, and status: resolved.", line)
 
     def _verify_git_phase_post_review_state(self, phase: Artifact, review: Artifact, endpoint: str, line: int) -> None:
-        """Allow only explicit phase lifecycle records after a frozen Git review."""
+        """Enforce current-state post-review gates outside archival audits."""
+        if self.identity_mode == "historical":
+            return
         repository = self._repo_for_artifact(phase)
         target_root = git_worktree_root(repository)
         if target_root is None:
@@ -1442,12 +1651,12 @@ class Validator:
             self.error(phase, "SDD173", f"Committed target paths changed after the frozen phase review are not lifecycle-only: {', '.join(material)}.", "Rerun the full phase review after source, test, configuration, or other material changes.", line)
             return
         for path, kind in self._git_phase_lifecycle_intent_paths(phase, target_root):
-            frozen_projection = self._git_artifact_projection(target_root, endpoint, path, kind)
-            current_projection = self._git_artifact_projection(target_root, "HEAD", path, kind)
-            if frozen_projection is None or current_projection is None:
+            frozen_normalized = self._git_lifecycle_normalized_artifact(target_root, endpoint, path, kind)
+            current_normalized = self._git_lifecycle_normalized_artifact(target_root, "HEAD", path, kind)
+            if frozen_normalized is None or current_normalized is None:
                 self.error(phase, "SDD173", f"Cannot compare canonical {kind} intent for lifecycle path `{path}` across the frozen phase review.", "Keep the governing phase and plan artifacts valid and present at both the frozen endpoint and HEAD, or rerun the full phase review.", line)
                 return
-            if frozen_projection != current_projection:
+            if frozen_normalized != current_normalized:
                 self.error(phase, "SDD173", f"Lifecycle path `{path}` changes canonical {kind} intent after the frozen phase review.", "Do not change phase/plan scope, requirements, tasks, or acceptance text after review; rerun the full phase review.", line)
                 return
 
@@ -1465,8 +1674,8 @@ class Validator:
                 pass
         return result
 
-    def _git_artifact_projection(self, repository: Path, revision: str, relative: str, kind: str) -> bytes | None:
-        """Project a lifecycle artifact as stored at one immutable Git revision."""
+    def _git_lifecycle_normalized_artifact(self, repository: Path, revision: str, relative: str, kind: str) -> bytes | None:
+        """Load lifecycle-normalized artifact bytes from one immutable Git revision."""
         source = subprocess.run(
             ["git", "-C", str(repository), "show", f"{revision}:{relative}"],
             check=False,
@@ -1476,8 +1685,8 @@ class Validator:
             return None
         artifact = Artifact(repository / relative, relative, {"type": kind}, "", source.stdout.decode("utf-8", errors="replace"), 1)
         try:
-            return project_artifact(artifact)
-        except StopIteration:
+            return lifecycle_normalized_artifact(artifact)
+        except (StopIteration, ValueError):
             return None
 
     def _git_phase_lifecycle_paths(self, phase: Artifact, review: Artifact, target_root: Path) -> set[str]:
@@ -1495,199 +1704,7 @@ class Validator:
                 allowed.add(path.resolve().relative_to(target_root).as_posix())
             except ValueError:
                 pass
-        if plan_name:
-            evidence_root = self.root / "Plans" / plan_name / "evidence"
-            try:
-                prefix = evidence_root.resolve().relative_to(target_root).as_posix().rstrip("/") + "/"
-            except ValueError:
-                prefix = ""
-            if prefix:
-                tracked = subprocess.run(
-                    ["git", "-C", str(target_root), "ls-files", "-z", "--", prefix],
-                    check=False,
-                    capture_output=True,
-                )
-                if tracked.returncode == 0:
-                    allowed.update(value.decode("utf-8", errors="surrogateescape") for value in tracked.stdout.split(b"\0") if value)
         return allowed
-
-    def _verify_capture_committed(self, artifact: Artifact, capture: str, name: str, line: int) -> None:
-        target = self._capture_path(artifact, capture)
-        repository = git_root(target)
-        planning_repository = git_root(artifact.path)
-        if repository is None or repository != planning_repository:
-            self.error(artifact, "SDD078", f"`{name}` local fallback capture `{capture}` is not in the lifecycle artifact's Git worktree.", "Commit local fallback objects in the same planning repository as the lifecycle evidence or use a validated immutable artifact URI with retention.", line)
-            return
-        if not target.is_file():
-            self.error(artifact, "SDD078", f"`{name}` local fallback capture `{capture}` is missing from the worktree.", "Restore the exact committed fallback object or correct the evidence path.", line)
-            return
-        paths = [target]
-        contents = Path(f"{target}.contents")
-        if contents.is_dir():
-            paths.extend(item for item in contents.iterdir() if item.is_file())
-        for path in paths:
-            try:
-                relative = path.resolve().relative_to(repository).as_posix()
-            except ValueError:
-                self.error(artifact, "SDD078", f"`{name}` fallback object `{path}` is outside its Git worktree.", "Store and commit fallback objects under the planning root.", line)
-                continue
-            committed = subprocess.run(
-                ["git", "-C", str(repository), "show", f"HEAD:{relative}"],
-                check=False,
-                capture_output=True,
-            )
-            if committed.returncode != 0 or committed.stdout != path.read_bytes():
-                self.error(artifact, "SDD078", f"`{name}` fallback object `{relative}` is not durably committed at HEAD.", "Commit the exact fallback manifest/content object with the lifecycle evidence or use an immutable retained URI.", line)
-
-    def _check_exclusions(self, artifact: Artifact, exclusions: set[str], capture_paths: list[str], name: str, line: int) -> None:
-        if not exclusions:
-            return
-        repository = self._repo_for_artifact(artifact)
-        allowed: set[str] = set(capture_paths)
-        try:
-            allowed.add(artifact.path.resolve().relative_to(repository).as_posix())
-        except ValueError:
-            pass
-        plan_names = self._candidate_plan_names(artifact)
-        for plan_name in plan_names:
-            plan_readme = self.root / "Plans" / plan_name / "README.md"
-            if plan_readme.is_file():
-                try:
-                    allowed.add(plan_readme.resolve().relative_to(repository).as_posix())
-                except ValueError:
-                    pass
-            notes = self.root / "Plans" / plan_name / "notes"
-            if notes.is_dir():
-                for debrief in notes.glob("*.md"):
-                    try:
-                        allowed.add(debrief.resolve().relative_to(repository).as_posix())
-                    except ValueError:
-                        pass
-        for capture in capture_paths:
-            contents = Path(f"{self._capture_path(artifact, capture)}.contents")
-            if contents.is_dir():
-                for item in contents.iterdir():
-                    if item.is_file():
-                        allowed.add(item.resolve().relative_to(repository).as_posix())
-        forbidden = sorted(exclusions - allowed)
-        if forbidden:
-            self.error(artifact, "SDD076", f"`{name}` excludes non-evidence paths: {', '.join(forbidden)}.", "Exclude only the governing phase/plan/debrief and recorded canonical evidence objects.", line)
-
-    def _required_intent_inputs(self, artifact: Artifact) -> set[str]:
-        required: dict[str, Artifact] = {artifact.rel: artifact}
-        plan_name = self._plan_name(artifact)
-        plan = self.by_path.get(f"Plans/{plan_name}/README.md") if plan_name else None
-        if artifact.kind == "plan":
-            plan = artifact
-        if plan:
-            required[plan.rel] = plan
-            phases = plan.meta.get("phases", [])
-            if artifact.kind == "plan" and isinstance(phases, list):
-                for phase in phases:
-                    if isinstance(phase, dict) and isinstance(phase.get("doc"), str):
-                        target = self.by_path.get((Path(plan.rel).parent / phase["doc"]).as_posix())
-                        if target:
-                            required[target.rel] = target
-            related = plan.meta.get("related", [])
-            if isinstance(related, list):
-                for reference in related:
-                    target = self.resolve(reference) if isinstance(reference, str) else None
-                    if target and target.kind in {"spec", "design"}:
-                        required[target.rel] = target
-        repository_key = str(self._repo_for_artifact(artifact))
-        combined = "\n".join(item.source for item in required.values())
-        for number in IDS["D"].findall(no_comments(combined)):
-            decision_id = f"D-{number}"
-            decision = self.decisions.get((repository_key, decision_id))
-            if decision and decision[1].get("status") == "accepted":
-                required[decision_id] = decision[0]
-        return set(required)
-
-    def _digest(
-        self,
-        artifact: Artifact,
-        name: str,
-        value: str,
-        line: int,
-        require_inputs: bool = False,
-        capture_kind: str = "",
-        expected_inputs: set[str] | None = None,
-        expected_vcs: str = "",
-        expected_revision: str = "",
-        expected_exclusions: set[str] | None = None,
-        expected_ignored: set[str] | None = None,
-        expected_directories: set[str] | None = None,
-    ) -> None:
-        digest = SHA256.search(value)
-        relative = digest_location(value)
-        if digest is None or relative is None or (require_inputs and "inputs:" not in value):
-            self.error(artifact, "SDD076", f"`{name}` contains malformed digest evidence.", "Record SHA-256, durable path, and required inputs.", line)
-            return
-        parsed = urlparse(relative)
-        if parsed.scheme:
-            if parsed.scheme != "ipfs" or ipfs_sha256(relative) != digest.group(1).lower() or "retention:" not in value.lower():
-                self.error(artifact, "SDD077", f"Evidence URI `{relative}` is not demonstrably content-addressed and retained.", "Use a supported immutable URI containing the recorded SHA-256 and record retention.", line)
-            return
-        target = self._capture_path(artifact, relative)
-        try:
-            target.relative_to(self.root)
-        except ValueError:
-            self.error(artifact, "SDD077", f"Evidence path `{relative}` is outside the planning root.", "Store evidence under the planning root.", line)
-            return
-        if not target.is_file():
-            self.error(artifact, "SDD078", f"Evidence file `{relative}` does not exist.", "Create it or correct the path.", line)
-            return
-        content = target.read_bytes()
-        actual = hashlib.sha256(content).hexdigest()
-        if actual.lower() != digest.group(1).lower():
-            self.error(artifact, "SDD079", f"Evidence file `{relative}` hashes to `{actual}`, not the recorded digest.", "Regenerate or correct the evidence.", line)
-            return
-        if capture_kind == "intent":
-            error, projection_inputs, records = validate_intent_projection(content)
-            if error:
-                self.error(artifact, "SDD079", f"Governing-intent file `{relative}` is malformed: {error}", "Regenerate the canonical `sdd-intent-v2` projection.", line)
-            elif expected_inputs is not None and projection_inputs != expected_inputs:
-                self.error(artifact, "SDD079", f"Governing-intent inputs {sorted(projection_inputs)} do not match recorded inputs {sorted(expected_inputs)}.", "Record the exact projection input references.", line)
-            elif self.identity_mode != "historical":
-                for kind, reference, payload in records:
-                    expected = self._current_projection(artifact, kind, reference)
-                    if expected is None:
-                        self.error(artifact, "SDD079", f"Governing-intent input `{reference}` does not resolve for current projection.", "Correct the input reference or use explicit historical mode for a historical audit.", line)
-                    elif payload != expected:
-                        self.error(artifact, "SDD079", f"Governing-intent payload for `{reference}` does not match the current canonical projection.", "Regenerate the governing-intent projection immediately before completion.", line)
-        elif capture_kind == "snapshot":
-            for error in validate_snapshot(target, content, expected_vcs, expected_revision, expected_exclusions or set()):
-                self.error(artifact, "SDD079", f"Snapshot `{relative}` is malformed: {error}", "Regenerate the canonical snapshot manifest and content objects.", line)
-            if (
-                self.identity_mode != "historical"
-                and expected_vcs in {"git", "git-worktree"}
-                and expected_revision.endswith("-dirty")
-            ):
-                for error in compare_dirty_git_snapshot(
-                    target,
-                    content,
-                    self._repo_for_artifact(artifact),
-                    expected_revision.removesuffix("-dirty"),
-                    expected_exclusions or set(),
-                    expected_ignored or set(),
-                    expected_directories or set(),
-                ):
-                    self.error(
-                        artifact,
-                        "SDD159",
-                        f"Snapshot `{relative}` does not match the current Git worktree: {error}",
-                        "Regenerate the canonical dirty snapshot after final verification.",
-                        line,
-                    )
-
-    def _current_projection(self, governing: Artifact, kind: str, reference: str) -> bytes | None:
-        if kind == "artifact":
-            target = self.resolve(reference)
-            return project_artifact(target) if target else None
-        repository_key = str(self._repo_for_artifact(governing))
-        decision_id = reference.rsplit("#", 1)[-1]
-        entry = self.decisions.get((repository_key, decision_id))
-        return project_decision_entry(entry[0], decision_id) if entry else None
 
     def _review(self, artifact: Artifact) -> None:
         self._required(artifact, ("review_of", "rev"))
@@ -2233,6 +2250,30 @@ def markdown_lines(body: str) -> list[tuple[str, str]]:
     fence: tuple[str, int] | None = None
     in_comment = False
     for raw in body.splitlines(keepends=True):
+        source = raw
+        if fence is not None:
+            marker, length = fence
+            indent, stripped = markdown_indentation(raw)
+            if indent <= 3 and re.match(rf"^{re.escape(marker)}{{{length},}}\s*$", stripped.rstrip("\r\n")):
+                fence = None
+            result.append((raw, "\n" if raw.endswith("\n") else ""))
+            continue
+        if in_comment:
+            closing = raw.find("-->")
+            if closing < 0:
+                result.append((source, "\n" if source.endswith("\n") else ""))
+                continue
+            in_comment = False
+            raw = raw[closing + 3 :]
+        raw_indent, stripped_raw = markdown_indentation(raw)
+        opener = raw_fence_opener(stripped_raw) if raw_indent <= 3 and not in_comment else None
+        if opener:
+            fence = opener
+            result.append((source, "\n" if source.endswith("\n") else ""))
+            continue
+        if raw_indent >= 4:
+            result.append((source, "\n" if source.endswith("\n") else ""))
+            continue
         visible_parts: list[str] = []
         remaining = raw
         while remaining:
@@ -2254,22 +2295,32 @@ def markdown_lines(body: str) -> list[tuple[str, str]]:
         visible_text = "".join(visible_parts)
         if raw.endswith("\n") and not visible_text.endswith("\n"):
             visible_text += "\n"
-        stripped = visible_text.lstrip(" ")
-        indent = len(visible_text) - len(stripped)
-        if fence is not None:
-            marker, length = fence
-            if indent <= 3 and re.match(rf"^{re.escape(marker)}{{{length},}}\s*$", stripped.rstrip("\r\n")):
-                fence = None
-            result.append((raw, "\n" if raw.endswith("\n") else ""))
-            continue
-        opener = re.match(r"^(`{3,}|~{3,})", stripped) if indent <= 3 else None
-        if opener:
-            token = opener.group(1)
-            fence = (token[0], len(token))
-            result.append((raw, "\n" if raw.endswith("\n") else ""))
-            continue
-        result.append((raw, visible_text))
+        result.append((source, visible_text))
     return result
+
+
+def markdown_indentation(raw: str) -> tuple[int, str]:
+    """Return CommonMark indentation columns and the text after leading whitespace."""
+    columns = 0
+    index = 0
+    while index < len(raw) and raw[index] in " \t":
+        if raw[index] == "\t":
+            columns += 4 - columns % 4
+        else:
+            columns += 1
+        index += 1
+    return columns, raw[index:]
+
+
+def raw_fence_opener(raw: str) -> tuple[str, int] | None:
+    """Return a valid CommonMark fence opener without parsing inline HTML."""
+    match = re.match(r"^(`{3,}|~{3,})([^\r\n]*)$", raw.rstrip("\r\n"))
+    if not match:
+        return None
+    token, info = match.groups()
+    if token[0] == "`" and "`" in info:
+        return None
+    return token[0], len(token)
 
 
 def visible_markdown(body: str) -> str:
@@ -2278,39 +2329,18 @@ def visible_markdown(body: str) -> str:
 
 def heading_bodies(body: str, level: int, label: str) -> list[str]:
     lines = markdown_lines(body)
-    marker = re.compile(rf"^{'#' * level}\s+{re.escape(label)}\s*$")
+    marker = re.compile(rf"^ {{0,3}}{'#' * level}\s+{re.escape(label)}\s*$")
     starts = [index for index, (_, visible) in enumerate(lines) if marker.match(visible.rstrip("\r\n"))]
     result: list[str] = []
     for start in starts:
         end = len(lines)
         for index in range(start + 1, len(lines)):
             _, visible = lines[index]
-            if re.match(rf"^#{{1,{level}}}\s+", visible):
+            if re.match(rf"^ {{0,3}}#{{1,{level}}}\s+", visible):
                 end = index
                 break
-        result.append(no_comments("".join(raw for raw, _ in lines[start + 1 : end])).strip())
+        result.append(no_comments("".join(visible for _, visible in lines[start + 1 : end])).strip())
     return result
-
-
-def rollup_bodies(body: str, label: str) -> list[str]:
-    lines = markdown_lines(body)
-    marker = re.compile(rf"^###\s+{re.escape(label)}\s*$")
-    starts = [index for index, (_, visible) in enumerate(lines) if marker.match(visible.rstrip("\r\n"))]
-    result: list[str] = []
-    for start in starts:
-        end = len(lines)
-        for index in range(start + 1, len(lines)):
-            _, visible = lines[index]
-            if re.match(r"^#{1,3}\s+", visible):
-                end = index
-                break
-        result.append(no_comments("".join(raw for raw, _ in lines[start + 1 : end])).strip())
-    return result
-
-
-def encode_path_bytes(value: bytes) -> str:
-    safe = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-/"
-    return "".join(chr(byte) if byte in safe else f"%{byte:02X}" for byte in value)
 
 
 def git_output(repository: Path, *args: str) -> tuple[bytes | None, str | None]:
@@ -2324,289 +2354,19 @@ def git_output(repository: Path, *args: str) -> tuple[bytes | None, str | None]:
     return result.stdout, None
 
 
-def worktree_snapshot_entry(repository: Path, relative: bytes, base: str) -> tuple[tuple[str, str, int, str] | None, str | None]:
-    value = os.fsdecode(relative)
-    target = repository / value
-    tree, error = git_output(repository, "ls-tree", "-z", base, "--", value)
-    if error:
-        return None, error
-    base_mode = tree.split(b" ", 1)[0].decode("ascii") if tree else ""
-    if base_mode == "160000":
-        return None, f"changed Gitlink `{value}` requires a separate nested-repository snapshot"
-    try:
-        info = target.lstat()
-    except FileNotFoundError:
-        return ("D", "000000", 0, "-"), None
-    mode = f"{stat.S_IMODE(info.st_mode) | stat.S_IFMT(info.st_mode):06o}"
-    if stat.S_ISREG(info.st_mode):
-        content = target.read_bytes()
-        current_type = "file"
-    elif stat.S_ISLNK(info.st_mode):
-        content = os.fsencode(os.readlink(target))
-        current_type = "symlink"
-    else:
-        return None, f"changed path `{value}` has unsupported file type"
-    base_type = "symlink" if base_mode == "120000" else "file" if base_mode.startswith("100") else ""
-    state = "A" if not base_mode else "T" if base_type != current_type else "M"
-    return (state, mode, len(content), hashlib.sha256(content).hexdigest()), None
-
-
-def compare_dirty_git_snapshot(
-    path: Path,
-    content: bytes,
-    repository: Path,
-    base: str,
-    exclusions: set[str],
-    ignored_inputs: set[str] | None = None,
-    directory_inputs: set[str] | None = None,
-) -> list[str]:
-    try:
-        text = content.decode("ascii")
-    except UnicodeDecodeError:
-        return []
-    lines = text.splitlines()
-    if not lines or lines[0] != "sdd-dirty-snapshot-v1":
-        return []
-    manifest: dict[str, tuple[str, str, int, str]] = {}
-    directories: dict[str, str] = {}
-    for line in lines[2:]:
-        fields = line.split("\t")
-        if fields[0] == "entry" and len(fields) == 6:
-            try:
-                manifest[fields[5]] = (fields[1], fields[2], int(fields[3]), fields[4])
-            except ValueError:
-                return []
-        elif fields[0] == "directory" and len(fields) == 3:
-            directories[fields[2]] = fields[1]
-
-    errors: list[str] = []
-    commit, error = git_output(repository, "cat-file", "-e", f"{base}^{{commit}}")
-    if error or commit is None:
-        return [f"base revision `{base}` is unavailable"]
-    unmerged, error = git_output(repository, "ls-files", "-u", "-z")
-    if error:
-        return [f"cannot inspect index: {error}"]
-    if unmerged:
-        errors.append("index contains unmerged entries")
-
-    changed, error = git_output(repository, "diff", "--name-only", "--no-renames", "-z", base, "--")
-    if error:
-        return [f"cannot compare base to worktree: {error}"]
-    untracked, error = git_output(repository, "ls-files", "--others", "--exclude-standard", "-z")
-    if error:
-        return [f"cannot enumerate untracked files: {error}"]
-    paths = {item for value in (changed or b"", untracked or b"") for item in value.split(b"\0") if item}
-    expected_directories = set(directory_inputs or set())
-    ignored_directory_roots: set[str] = set()
-    for ignored in ignored_inputs or set():
-        if not valid_decoded_path(os.fsencode(ignored)):
-            errors.append(f"ignored input path `{ignored}` is not canonical and repository-relative")
-            continue
-        ignored_check, ignored_error = git_output(repository, "check-ignore", "-q", "--", ignored)
-        if ignored_error or ignored_check is None:
-            errors.append(f"recorded ignored input `{ignored}` is not ignored by Git")
-            continue
-        target = repository / ignored
-        try:
-            info = target.lstat()
-        except FileNotFoundError:
-            errors.append(f"recorded ignored input `{ignored}` does not exist")
-            continue
-        if stat.S_ISDIR(info.st_mode):
-            expected_directories.add(ignored)
-            ignored_directory_roots.add(ignored)
-        else:
-            paths.add(os.fsencode(ignored))
-    directory_roots = set(expected_directories)
-    for declared in directory_roots:
-        target = repository / declared
-        try:
-            info = target.lstat()
-        except FileNotFoundError:
-            errors.append(f"recorded directory input `{declared}` does not exist")
-            continue
-        if not stat.S_ISDIR(info.st_mode):
-            errors.append(f"recorded directory input `{declared}` is not a directory")
-            continue
-        for current_root, dirnames, filenames in os.walk(target, followlinks=False):
-            current_path = Path(current_root)
-            current_relative = current_path.relative_to(repository).as_posix()
-            expected_directories.add(current_relative)
-            for dirname in list(dirnames):
-                child = current_path / dirname
-                if child.is_symlink():
-                    dirnames.remove(dirname)
-                    if any(current_relative == root or current_relative.startswith(root + "/") for root in ignored_directory_roots):
-                        paths.add(os.fsencode(child.relative_to(repository).as_posix()))
-            if any(current_relative == root or current_relative.startswith(root + "/") for root in ignored_directory_roots):
-                for filename in filenames:
-                    paths.add(os.fsencode((current_path / filename).relative_to(repository).as_posix()))
-    tree, tree_error = git_output(repository, "ls-tree", "-rz", "--full-tree", base)
-    if tree_error:
-        errors.append(f"cannot enumerate base tree modes: {tree_error}")
-    else:
-        for record in (tree or b"").split(b"\0"):
-            if not record or b"\t" not in record:
-                continue
-            header, relative = record.split(b"\t", 1)
-            mode = header.split(b" ", 1)[0]
-            if not mode.startswith(b"100"):
-                continue
-            decoded = os.fsdecode(relative)
-            if decoded in exclusions:
-                continue
-            try:
-                current = (repository / decoded).lstat()
-            except FileNotFoundError:
-                continue
-            actual_mode = f"{stat.S_IMODE(current.st_mode) | stat.S_IFMT(current.st_mode):06o}".encode()
-            if actual_mode != mode:
-                paths.add(relative)
-    expected: dict[str, tuple[str, str, int, str]] = {}
-    for relative in paths:
-        decoded = os.fsdecode(relative)
-        if decoded in exclusions:
-            continue
-        encoded = encode_path_bytes(relative)
-        entry, entry_error = worktree_snapshot_entry(repository, relative, base)
-        if entry_error:
-            errors.append(entry_error)
-        elif entry:
-            expected[encoded] = entry
-
-    missing = sorted(set(expected) - set(manifest))
-    extra = sorted(set(manifest) - set(expected))
-    if missing:
-        errors.append(f"manifest omits changed paths: {', '.join(missing)}")
-    if extra:
-        errors.append(f"manifest contains unchanged or excluded paths: {', '.join(extra)}")
-    for encoded in sorted(set(expected) & set(manifest)):
-        if expected[encoded] != manifest[encoded]:
-            errors.append(f"manifest metadata for `{encoded}` is {manifest[encoded]}, expected {expected[encoded]}")
-
-    staged, error = git_output(repository, "diff", "--cached", "--name-only", "-z", base, "--")
-    if error:
-        errors.append(f"cannot inspect staged paths: {error}")
-        staged = b""
-    staged_paths = {item for item in (staged or b"").split(b"\0") if item}
-    index_output, error = git_output(repository, "ls-files", "-s", "-z", "--")
-    if error:
-        errors.append(f"cannot inspect index entries: {error}")
-        index_output = b""
-    index: dict[bytes, tuple[str, str]] = {}
-    for record in (index_output or b"").split(b"\0"):
-        if not record or b"\t" not in record:
-            continue
-        header, relative = record.split(b"\t", 1)
-        fields = header.decode("ascii", errors="replace").split()
-        if len(fields) == 3 and fields[2] == "0":
-            index[relative] = (fields[0], fields[1])
-    for relative in sorted(staged_paths):
-        decoded = os.fsdecode(relative)
-        if decoded in exclusions:
-            continue
-        indexed = index.get(relative)
-        target = repository / decoded
-        try:
-            info = target.lstat()
-        except FileNotFoundError:
-            info = None
-        if indexed is None:
-            if info is not None:
-                errors.append(f"staged path `{encode_path_bytes(relative)}` is absent from the index but present in the worktree")
-            continue
-        if info is None:
-            errors.append(f"staged path `{encode_path_bytes(relative)}` is present in the index but absent from the worktree")
-            continue
-        if stat.S_ISREG(info.st_mode):
-            worktree_mode = "100755" if info.st_mode & 0o111 else "100644"
-            worktree_content = target.read_bytes()
-        elif stat.S_ISLNK(info.st_mode):
-            worktree_mode = "120000"
-            worktree_content = os.fsencode(os.readlink(target))
-        else:
-            errors.append(f"staged path `{encode_path_bytes(relative)}` has unsupported worktree type")
-            continue
-        blob, blob_error = git_output(repository, "cat-file", "blob", indexed[1])
-        if blob_error or blob is None:
-            errors.append(f"cannot read index blob for `{encode_path_bytes(relative)}`")
-            continue
-        if indexed[0] != worktree_mode or blob != worktree_content:
-            errors.append(f"staged path `{encode_path_bytes(relative)}` differs from worktree bytes or mode")
-
-    expected_encoded_directories = {encode_path_bytes(os.fsencode(value)) for value in expected_directories}
-    missing_directories = sorted(expected_encoded_directories - set(directories))
-    extra_directories = sorted(set(directories) - expected_encoded_directories)
-    if missing_directories:
-        errors.append(f"manifest omits declared directories: {', '.join(missing_directories)}")
-    if extra_directories:
-        errors.append(f"manifest contains undeclared directories: {', '.join(extra_directories)}")
-    for encoded, recorded_mode in directories.items():
-        decoded = unquote_to_bytes(encoded)
-        if not valid_decoded_path(decoded):
-            errors.append(f"recorded directory `{encoded}` is not repository-relative")
-            continue
-        target = repository / os.fsdecode(decoded)
-        try:
-            target.resolve().relative_to(repository.resolve())
-        except ValueError:
-            errors.append(f"recorded directory `{encoded}` resolves outside the repository")
-            continue
-        try:
-            info = target.lstat()
-        except FileNotFoundError:
-            errors.append(f"recorded directory `{encoded}` does not exist")
-            continue
-        actual_mode = f"{stat.S_IMODE(info.st_mode) | stat.S_IFMT(info.st_mode):06o}"
-        if not stat.S_ISDIR(info.st_mode) or actual_mode != recorded_mode:
-            errors.append(f"recorded directory `{encoded}` mode is `{recorded_mode}`, expected `{actual_mode}`")
-    return errors
-
-
 def evidence_value(body: str, label: str) -> str | None:
-    match = re.search(rf"^\s*-\s+{re.escape(label)}:\s*(.+?)\s*$", body, re.MULTILINE)
-    return match.group(1) if match else None
+    values = evidence_values(body, label)
+    return values[0] if values else None
 
 
-def digest_location(value: str) -> str | None:
-    match = re.search(r"\bat\s+`?([^`;]+?)`?(?:;|$)", value)
-    return match.group(1).strip() if match else None
-
-
-def parse_exclusions(value: str | None) -> set[str]:
-    scalar = markdown_scalar(value)
-    if not scalar or scalar.lower() == "none":
-        return set()
-    return {part.strip().strip("`") for part in scalar.split(",") if part.strip().strip("`")}
-
-
-def parse_inventory_paths(value: str | None) -> tuple[set[str], str | None]:
-    scalar = markdown_scalar(value)
-    if not scalar:
-        return set(), "value is empty"
-    if scalar.lower().startswith("none with ") and scalar[10:].strip():
-        return set(), None
-    match = re.search(r"\bpaths:\s*(.+?)(?:;|$)", scalar, re.IGNORECASE)
-    if not match:
-        return set(), "value does not use a documented inventory form"
-    paths = {
-        part.strip().strip("`")
-        for part in match.group(1).split(",")
-        if part.strip().strip("`")
-    }
-    basis = scalar[match.end() :].lstrip("; ").strip()
-    if not paths or not basis:
-        return set(), "paths or inspection/digest basis is empty"
-    if any(not valid_decoded_path(os.fsencode(path)) for path in paths):
-        return set(), "a path is not canonical and repository-relative"
-    return paths, None
-
-
-def parse_recorded_inputs(value: str) -> set[str]:
-    marker = re.search(r"\binputs:\s*(.+)$", value)
-    if not marker:
-        return set()
-    return {part.strip().strip("`") for part in marker.group(1).split(",") if part.strip().strip("`")}
+def evidence_values(body: str, label: str) -> list[str]:
+    """Return visible, non-fenced values for an exact evidence label."""
+    pattern = re.compile(rf"^\s*-\s+{re.escape(label)}:\s*(.*?)\s*$")
+    return [
+        match.group(1)
+        for _, visible in markdown_lines(body)
+        if (match := pattern.match(visible.rstrip("\r\n")))
+    ]
 
 
 def markdown_scalar(value: str | None) -> str | None:
@@ -2639,13 +2399,14 @@ def parse_git_frozen_identity(value: str) -> tuple[str, ...] | None:
 def git_commit_exists(repository: Path, identity: str) -> bool:
     try:
         result = subprocess.run(
-            ["git", "-C", str(repository), "cat-file", "-e", f"{identity}^{{commit}}"],
+            ["git", "-C", str(repository), "cat-file", "-t", identity],
             check=False,
             capture_output=True,
+            text=True,
         )
     except OSError:
         return False
-    return result.returncode == 0
+    return result.returncode == 0 and result.stdout.strip() == "commit"
 
 
 def valid_focused_review_syntax(value: str | None) -> bool:
@@ -2675,9 +2436,12 @@ def phase_review_schema_errors(meta: dict[str, Any]) -> list[str]:
         "review_blind_spots",
     }
     errors: list[str] = []
+    revision = meta.get("reviewed_planning_revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+        errors.append("reviewed_planning_revision must be a full 40-hex Git commit")
     for field in ("reviewed_phase_intent_sha256", "reviewed_plan_intent_sha256"):
-        if not isinstance(meta.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", meta[field]):
-            errors.append(f"{field} must be a lowercase 64-hex SHA-256 digest")
+        if field in meta:
+            errors.append(f"{field} is a removed custom SHA field")
     if meta.get("review_mode") not in {"independent", "mixed", "single-agent"}:
         errors.append("review_mode must be independent, mixed, or single-agent")
     rows = meta.get("lane_results")
@@ -2728,7 +2492,7 @@ def evidence_rows(body: str) -> list[tuple[str, tuple[str, str, str, str]]]:
     rows: list[tuple[str, tuple[str, str, str, str]]] = []
     active: str | None = None
     for raw_line in visible_markdown(body).splitlines():
-        cells = [cell.strip() for cell in raw_line.strip().strip("|").split("|")]
+        cells = [markdown_scalar(cell) or "" for cell in raw_line.strip().strip("|").split("|")]
         if cells == ["Command", "Working directory", "Result", "Observable evidence"]:
             active = "command"
             continue
@@ -2742,240 +2506,10 @@ def evidence_rows(body: str) -> list[tuple[str, tuple[str, str, str, str]]]:
         if len(cells) != 4 or not raw_line.lstrip().startswith("|"):
             active = None
             continue
-        values = tuple(markdown_scalar(cell) or "" for cell in cells)
+        values = tuple(cells)
         if all(values) and not any("<" in value and ">" in value for value in values):
             rows.append((active, values))  # type: ignore[arg-type]
     return rows
-
-
-def validate_intent_projection(content: bytes) -> tuple[str | None, set[str], list[tuple[str, str, bytes]]]:
-    header = b"sdd-intent-v2\n"
-    if not content.startswith(header):
-        return "missing `sdd-intent-v2` header", set(), []
-    offset = len(header)
-    inputs: set[str] = set()
-    records: list[tuple[str, str, bytes]] = []
-    previous_reference = ""
-    while offset < len(content):
-        newline = content.find(b"\n", offset)
-        if newline < 0:
-            return "unterminated input header", inputs, records
-        try:
-            fields = content[offset:newline].decode("utf-8").split("\t")
-        except UnicodeDecodeError:
-            return "input header is not UTF-8", inputs, records
-        if len(fields) != 4 or fields[0] != "input" or fields[1] not in {"artifact", "decision"} or not valid_encoded_path(fields[2]):
-            return "invalid input header", inputs, records
-        reference = unquote(fields[2])
-        if reference in inputs:
-            return "duplicate input reference", inputs, records
-        if fields[2] < previous_reference:
-            return "input records are not encoded-reference sorted", inputs, records
-        previous_reference = fields[2]
-        try:
-            byte_count = int(fields[3])
-        except ValueError:
-            return "input byte-count is not decimal", inputs, records
-        if byte_count < 0 or newline + 1 + byte_count > len(content):
-            return "input byte-count exceeds projection length", inputs, records
-        payload = content[newline + 1 : newline + 1 + byte_count]
-        if fields[1] == "artifact":
-            if not payload.startswith(b"---\n") or b"\n---\n" not in payload:
-                return "artifact projection payload lacks YAML frontmatter", inputs, records
-            yaml_end = payload.find(b"\n---\n", 4)
-            try:
-                projected_meta = yaml.safe_load(payload[4:yaml_end].decode("utf-8"))
-            except (UnicodeDecodeError, yaml.YAMLError):
-                return "artifact projection frontmatter is invalid", inputs, records
-            if not isinstance(projected_meta, dict):
-                return "artifact projection frontmatter is not a mapping", inputs, records
-            required = {"title", "type", "created"}
-            if not required.issubset(projected_meta) or "status" in projected_meta or "updated" in projected_meta:
-                return "artifact projection has missing common fields or retained lifecycle fields", inputs, records
-            artifact_type = projected_meta.get("type")
-            if artifact_type not in {"plan", "phase", "spec", "design"}:
-                return "artifact projection has unsupported type", inputs, records
-            projected_body = payload[yaml_end + 5 :].decode("utf-8", errors="replace")
-            for heading in REQUIRED_HEADINGS.get(str(artifact_type), ()):
-                if not re.search(rf"^##\s+{re.escape(heading)}\s*$", projected_body, re.MULTILINE):
-                    return f"artifact projection lacks `## {heading}`", inputs, records
-            if artifact_type in {"plan", "phase"} and PENDING not in projected_body:
-                return "plan/phase projection lacks normalized pending evidence", inputs, records
-        else:
-            if not payload.lstrip().startswith(b"- id: D-"):
-                return "decision projection payload does not start with a decision id", inputs, records
-            try:
-                projected_decision = yaml.safe_load(payload.decode("utf-8"))
-            except (UnicodeDecodeError, yaml.YAMLError):
-                return "decision projection YAML is invalid", inputs, records
-            if not isinstance(projected_decision, list) or len(projected_decision) != 1 or not isinstance(projected_decision[0], dict):
-                return "decision projection is not exactly one entry", inputs, records
-            if projected_decision[0].get("id") != reference.rsplit("#", 1)[-1]:
-                return "decision projection id does not match its reference", inputs, records
-        inputs.add(reference)
-        records.append((fields[1], reference, payload))
-        offset = newline + 1 + byte_count
-    return (None, inputs, records) if records else ("projection contains no inputs", inputs, records)
-
-
-def validate_snapshot(
-    path: Path,
-    content: bytes,
-    expected_vcs: str = "",
-    expected_revision: str = "",
-    expected_exclusions: set[str] | None = None,
-) -> list[str]:
-    try:
-        text = content.decode("ascii")
-    except UnicodeDecodeError:
-        return ["manifest is not ASCII"]
-    if not text.endswith("\n"):
-        return ["manifest has no final LF"]
-    lines = text.splitlines()
-    if not lines:
-        return ["manifest is empty"]
-    if lines[0] == "sdd-dirty-snapshot-v1":
-        expected_fields = 6
-        if len(lines) < 2 or not re.fullmatch(r"base\t[0-9a-fA-F]{40}", lines[1]):
-            return ["dirty manifest has no full Git base revision"]
-        if expected_vcs and expected_vcs not in {"git", "git-worktree"}:
-            return [f"dirty Git manifest contradicts recorded VCS `{expected_vcs}`"]
-        if expected_revision and lines[1].split("\t", 1)[1].lower() != expected_revision.removesuffix("-dirty").lower():
-            return ["dirty manifest base does not match recorded revision/base"]
-    elif lines[0] == "sdd-content-snapshot-v1":
-        expected_fields = 7
-        if len(lines) < 3 or lines[1] not in {"vcs\tperforce", "vcs\tnone"} or not lines[2].startswith("base\t"):
-            return ["content manifest has invalid VCS/base headers"]
-        manifest_vcs = lines[1].split("\t", 1)[1]
-        if expected_vcs and manifest_vcs != expected_vcs:
-            return [f"content manifest VCS `{manifest_vcs}` contradicts recorded VCS `{expected_vcs}`"]
-        manifest_base = lines[2].split("\t", 1)[1]
-        if expected_revision and manifest_base != expected_revision:
-            return ["content manifest base does not match recorded revision/base"]
-    else:
-        return ["unknown snapshot manifest header"]
-    errors: list[str] = []
-    entries = 0
-    previous_rank = 0
-    previous_path: dict[str, str] = {}
-    seen_paths: set[str] = set()
-    manifest_exclusions: set[str] = set()
-    for line in lines[1:]:
-        kind = line.split("\t", 1)[0]
-        if lines[0] == "sdd-dirty-snapshot-v1":
-            ranks = {"base": 0, "exclude": 1, "directory": 2, "entry": 3}
-        else:
-            ranks = {"vcs": 0, "base": 0, "exclude": 1, "have": 2, "entry": 3}
-        if kind not in ranks:
-            errors.append(f"unknown manifest record `{kind}`")
-            continue
-        rank = ranks[kind]
-        if rank < previous_rank:
-            errors.append(f"record `{kind}` is out of canonical group order")
-        previous_rank = max(previous_rank, rank)
-        fields = line.split("\t")
-        if kind == "exclude":
-            if len(fields) != 2 or not valid_encoded_path(fields[-1]):
-                errors.append("invalid exclude record")
-            elif fields[-1] < previous_path.get(kind, ""):
-                errors.append("exclude records are not path-sorted")
-            previous_path[kind] = fields[-1]
-            if len(fields) == 2:
-                manifest_exclusions.add(unquote(fields[-1]))
-            continue
-        if kind == "directory":
-            if len(fields) != 3 or not re.fullmatch(r"[0-7]{6}", fields[1]) or not valid_encoded_path(fields[-1]):
-                errors.append("invalid directory record")
-            elif fields[-1] < previous_path.get(kind, ""):
-                errors.append("directory records are not path-sorted")
-            previous_path[kind] = fields[-1]
-            continue
-        if kind == "have":
-            if len(fields) != 3 or not fields[1] or not valid_encoded_path(fields[2]):
-                errors.append("invalid have record")
-            elif fields[2] < previous_path.get(kind, ""):
-                errors.append("have records are not path-sorted")
-            previous_path[kind] = fields[2]
-            continue
-        if kind != "entry":
-            continue
-        entries += 1
-        if len(fields) != expected_fields:
-            errors.append(f"entry has {len(fields)} fields, expected {expected_fields}")
-            continue
-        if expected_fields == 6:
-            _, state, mode, size_text, digest, encoded_path, *extra = fields
-            entry_type = "-" if state == "D" else "f"
-            if state not in {"A", "M", "D", "T"}:
-                errors.append(f"entry `{encoded_path}` has invalid state `{state}`")
-        else:
-            _, state, entry_type, mode, size_text, digest, encoded_path, *extra = fields
-            if state not in {"P", "D"} or entry_type not in {"d", "f", "l", "-"}:
-                errors.append(f"entry `{encoded_path}` has invalid state/type")
-        if not valid_encoded_path(encoded_path):
-            errors.append(f"entry path `{encoded_path}` is not canonically encoded")
-        if encoded_path in seen_paths:
-            errors.append(f"entry path `{encoded_path}` is duplicated")
-        seen_paths.add(encoded_path)
-        if encoded_path < previous_path.get(kind, ""):
-            errors.append("entry records are not path-sorted")
-        previous_path[kind] = encoded_path
-        if not re.fullmatch(r"[0-7]{6}", mode):
-            errors.append(f"entry `{encoded_path}` has invalid mode `{mode}`")
-        try:
-            size = int(size_text)
-        except ValueError:
-            errors.append(f"entry `{encoded_path}` has non-decimal size")
-            continue
-        if expected_fields == 6 and state == "D" and (mode != "000000" or size != 0 or digest != "-"):
-            errors.append(f"deleted entry `{encoded_path}` has noncanonical metadata")
-        if expected_fields == 7 and state == "D" and (entry_type != "-" or mode != "000000" or size != 0 or digest != "-"):
-            errors.append(f"deleted entry `{encoded_path}` has noncanonical metadata")
-        if expected_fields == 7 and entry_type == "d" and (size != 0 or digest != "-"):
-            errors.append(f"directory entry `{encoded_path}` has noncanonical metadata")
-        if digest == "-":
-            if size != 0:
-                errors.append(f"entry `{encoded_path}` has no digest but nonzero size")
-            continue
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
-            errors.append(f"entry `{encoded_path}` has invalid SHA-256")
-            continue
-        if entry_type == "d":
-            errors.append(f"directory entry `{encoded_path}` unexpectedly has content")
-            continue
-        obj = Path(f"{path}.contents") / digest
-        if not obj.is_file():
-            errors.append(f"content object `{obj.name}` is missing")
-            continue
-        object_content = obj.read_bytes()
-        if len(object_content) != size:
-            errors.append(f"content object `{obj.name}` has size {len(object_content)}, expected {size}")
-        if hashlib.sha256(object_content).hexdigest() != digest:
-            errors.append(f"content object `{obj.name}` does not match its digest")
-    if not entries:
-        errors.append("manifest contains no entries")
-    if expected_exclusions is not None and manifest_exclusions != expected_exclusions:
-        errors.append(
-            f"manifest exclusions {sorted(manifest_exclusions)} do not match recorded exclusions {sorted(expected_exclusions)}"
-        )
-    return errors
-
-
-def valid_encoded_path(value: str) -> bool:
-    if not value or value.startswith("/") or value.endswith("/") or "//" in value:
-        return False
-    if any(part in {".", ".."} for part in value.split("/")):
-        return False
-    if re.fullmatch(r"(?:[A-Za-z0-9._/-]|%[0-9A-F]{2})+", value) is None:
-        return False
-    decoded = unquote_to_bytes(value)
-    return valid_decoded_path(decoded) and encode_path_bytes(decoded) == value
-
-
-def valid_decoded_path(value: bytes) -> bool:
-    return bool(value) and not value.startswith(b"/") and not value.endswith(b"/") and all(
-        part not in {b"", b".", b".."} for part in value.split(b"/")
-    )
 
 
 def resolution_entry(log: str, finding_id: str) -> str:
@@ -3000,131 +2534,240 @@ def strip_completion_evidence(text: str) -> str:
     )
 
 
-def project_artifact(artifact: Artifact) -> bytes:
-    lines = artifact.source.splitlines(keepends=True)
-    end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
-    projected_frontmatter: list[str] = []
-    for line in lines[1:end]:
-        if re.match(r"^(?:updated|status):\s*[^|>{}\[\]]+\n$", line):
-            continue
-        if artifact.kind in {"plan", "phase"} and re.match(r"^\s+status:\s*[^|>{}\[\]]+\n$", line):
-            continue
-        projected_frontmatter.append(line)
-    body = "".join(lines[end + 1 :])
+def lifecycle_normalized_artifact(artifact: Artifact) -> bytes:
+    """Normalize only lifecycle nodes while retaining all other source bytes."""
+    frontmatter, body = frontmatter_and_body(artifact.source)
+    root = compose_frontmatter(frontmatter)
+    payload_offset = len(frontmatter.splitlines(keepends=True)[0])
+    spans = [
+        (start + payload_offset, end + payload_offset)
+        for start, end in lifecycle_frontmatter_spans(root, artifact.kind)
+    ]
+    normalized_frontmatter = remove_spans(frontmatter, spans)
     if artifact.kind == "plan":
         body = normalize_evidence_section(body, 2, "Plan Completion Evidence")
     elif artifact.kind == "phase":
-        body = normalize_all_task_evidence(body)
+        task_ids = lifecycle_sequence_ids(root, "tasks")
+        body = normalize_all_task_evidence(body, task_ids)
         body = normalize_evidence_section(body, 2, "Phase Completion Evidence")
         body = normalize_checkboxes(body, 3, "Subtasks")
         body = normalize_checkboxes(body, 2, "Acceptance Criteria")
-    return ("---\n" + "".join(projected_frontmatter) + "---\n" + body).encode("utf-8")
+    return (normalized_frontmatter + body).encode("utf-8")
+
+
+def frontmatter_and_body(source: str) -> tuple[str, str]:
+    """Split source without reconstructing its delimiter or line-ending bytes."""
+    lines = source.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("malformed frontmatter")
+    end = next((index for index, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+    if end is None:
+        raise ValueError("malformed frontmatter")
+    return "".join(lines[: end + 1]), "".join(lines[end + 1 :])
+
+
+def compose_frontmatter(frontmatter: str) -> MappingNode:
+    """Compose the delimited YAML payload so removal can use source marks."""
+    lines = frontmatter.splitlines(keepends=True)
+    try:
+        root = yaml.compose("".join(lines[1:-1]))
+    except yaml.YAMLError as error:
+        raise ValueError("malformed frontmatter") from error
+    if not isinstance(root, MappingNode):
+        raise ValueError("frontmatter must be a YAML mapping")
+    return root
+
+
+def mapping_entries(node: MappingNode, name: str) -> list[tuple[ScalarNode, Node]]:
+    return [
+        (key, value)
+        for key, value in node.value
+        if isinstance(key, ScalarNode) and key.value == name
+    ]
+
+
+def lifecycle_entry_span(key: ScalarNode, value: Node, path: str, container: Node) -> tuple[int, int]:
+    """Return a removable block-style scalar mapping entry or reject ambiguity."""
+    if (
+        getattr(container, "flow_style", False)
+        or not isinstance(value, ScalarNode)
+        or value.style in {"|", ">"}
+        or key.start_mark.line != key.end_mark.line
+        or key.start_mark.line != value.end_mark.line
+    ):
+        raise ValueError(f"unsupported flow or multiline lifecycle node at `{path}`")
+    return key.start_mark.index, value.end_mark.index
+
+
+def lifecycle_frontmatter_spans(root: MappingNode, kind: str) -> list[tuple[int, int]]:
+    """Locate only top-level and declared child lifecycle status entries."""
+    spans: list[tuple[int, int]] = []
+    for name in ("updated", "status"):
+        for key, value in mapping_entries(root, name):
+            spans.append(lifecycle_entry_span(key, value, name, root))
+
+    field = "phases" if kind == "plan" else "tasks" if kind == "phase" else None
+    if field is None:
+        return spans
+    for _, sequence in mapping_entries(root, field):
+        if not isinstance(sequence, SequenceNode):
+            continue
+        for index, entry in enumerate(sequence.value):
+            if not isinstance(entry, MappingNode):
+                continue
+            for key, value in mapping_entries(entry, "status"):
+                spans.append(
+                    lifecycle_entry_span(key, value, f"{field}[{index}].status", entry)
+                )
+    return spans
+
+
+def lifecycle_sequence_ids(root: MappingNode, field: str) -> list[str]:
+    """Extract string ids from the original node tree for body ownership lookup."""
+    ids: list[str] = []
+    for _, sequence in mapping_entries(root, field):
+        if not isinstance(sequence, SequenceNode):
+            continue
+        for entry in sequence.value:
+            if not isinstance(entry, MappingNode):
+                continue
+            for _, value in mapping_entries(entry, "id"):
+                if isinstance(value, ScalarNode) and value.tag == "tag:yaml.org,2002:str":
+                    ids.append(value.value)
+    return ids
+
+
+def remove_spans(source: str, spans: Sequence[tuple[int, int]]) -> str:
+    """Remove exactly composed YAML node spans, leaving every other byte intact."""
+    result = source
+    for start, end in sorted(spans, reverse=True):
+        result = result[:start] + result[end:]
+    return result
 
 
 def normalize_evidence_section(text: str, level: int, heading: str) -> str:
-    marker = re.compile(rf"^{'#' * level}\s+{re.escape(heading)}\s*$", re.MULTILINE)
-    match = marker.search(text)
-    if not match:
-        return text
-    following = re.search(rf"^#{{1,{level}}}\s+", text[match.end() :], re.MULTILINE)
-    end = match.end() + following.start() if following else len(text)
-    return text[: match.end()] + "\n\n" + PENDING + "\n" + text[end:]
+    return normalize_visible_sections(text, level, heading, PENDING)
 
 
-def normalize_all_task_evidence(text: str) -> str:
-    marker = re.compile(r"^###\s+Completion Evidence\s*$", re.MULTILINE)
-    offset = 0
-    while match := marker.search(text, offset):
-        following = re.search(r"^#{1,3}\s+", text[match.end() :], re.MULTILINE)
-        end = match.end() + following.start() if following else len(text)
-        replacement = text[: match.end()] + "\n\n" + PENDING + "\n" + text[end:]
-        offset = match.end() + len(PENDING) + 2
-        text = replacement
-    return text
+def normalize_all_task_evidence(text: str, task_ids: Sequence[str]) -> str:
+    lines = markdown_lines(text)
+    sections = declared_task_completion_evidence_sections(lines, task_ids)
+    return normalize_section_ranges(
+        lines, [(start, end) for _, start, end in sections], PENDING
+    )
 
 
 def normalize_checkboxes(text: str, level: int, heading: str) -> str:
-    marker = re.compile(rf"^{'#' * level}\s+{re.escape(heading)}\s*$", re.MULTILINE)
-    offset = 0
-    while match := marker.search(text, offset):
-        following = re.search(rf"^#{{1,{level}}}\s+", text[match.end() :], re.MULTILINE)
-        end = match.end() + following.start() if following else len(text)
-        section = re.sub(r"\[[xX]\]", "[ ]", text[match.end() : end])
-        text = text[: match.end()] + section + text[end:]
-        offset = match.end() + len(section)
-    return text
+    lines = markdown_lines(text)
+    sections = visible_section_ranges(lines, level, heading)
+    covered = {index for start, end in sections for index in range(start + 1, end)}
+    return "".join(
+        re.sub(r"^(\s*-\s+)\[[xX]\]", r"\1[ ]", raw)
+        if index in covered and visible and markdown_checkbox_state(raw) in {"x", "X"}
+        else raw
+        for index, (raw, visible) in enumerate(lines)
+    )
 
 
-def project_decision_entry(artifact: Artifact, decision_id: str) -> bytes | None:
-    lines = artifact.source.splitlines(keepends=True)
-    pattern = re.compile(rf"^(\s*)- id:\s*{re.escape(decision_id)}\s*$")
-    start = None
-    indent = ""
-    for index, line in enumerate(lines):
-        match = pattern.match(line.rstrip("\n"))
+def markdown_checkbox_state(line: str) -> str | None:
+    """Return a visible task-list marker state at CommonMark list indentation."""
+    columns, stripped = markdown_indentation(line)
+    match = re.match(r"^-\s+\[([ xX])\]", stripped) if columns <= 3 else None
+    return match.group(1) if match else None
+
+
+def has_unchecked_checkbox(body: str) -> bool:
+    """Return whether visible Markdown contains an unchecked task-list marker."""
+    return any(markdown_checkbox_state(visible) == " " for _, visible in markdown_lines(body))
+
+
+def visible_section_ranges(
+    lines: list[tuple[str, str]], level: int, heading: str
+) -> list[tuple[int, int]]:
+    marker = re.compile(rf"^ {{0,3}}{'#' * level}\s+{re.escape(heading)}\s*$")
+    starts = [index for index, (_, visible) in enumerate(lines) if marker.match(visible.rstrip("\r\n"))]
+    result: list[tuple[int, int]] = []
+    for start in starts:
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(lines))
+                if re.match(rf"^ {{0,3}}#{{1,{level}}}\s+", lines[index][1])
+            ),
+            len(lines),
+        )
+        result.append((start, end))
+    return result
+
+
+def normalize_visible_sections(text: str, level: int, heading: str, replacement: str) -> str:
+    lines = markdown_lines(text)
+    sections = visible_section_ranges(lines, level, heading)
+    return normalize_section_ranges(lines, sections, replacement)
+
+
+def normalize_section_ranges(
+    lines: list[tuple[str, str]], sections: Iterable[tuple[int, int]], replacement: str
+) -> str:
+    """Replace only the bodies of selected visible heading sections."""
+    sections = list(sections)
+    starts = {start for start, _ in sections}
+    skipped = {index for start, end in sections for index in range(start + 1, end)}
+    result: list[str] = []
+    for index, (raw, _) in enumerate(lines):
+        if index in starts:
+            result.extend((raw, "\n" if raw.endswith("\n") else "", replacement, "\n"))
+        elif index not in skipped:
+            result.append(raw)
+    return "".join(result)
+
+
+def declared_task_completion_evidence_sections(
+    lines: list[tuple[str, str]], task_ids: Sequence[str]
+) -> list[tuple[str, int, int]]:
+    """Return only Completion Evidence headings within declared H2 task sections."""
+    marker = re.compile(r"^ {0,3}###\s+Completion Evidence\s*$")
+    result: list[tuple[str, int, int]] = []
+    for task_id, start, end in declared_task_section_ranges(lines, task_ids):
+        for index in range(start + 1, end):
+            if not marker.match(lines[index][1].rstrip("\r\n")):
+                continue
+            evidence_end = next(
+                (
+                    following
+                    for following in range(index + 1, end)
+                    if re.match(r"^ {0,3}#{1,3}\s+", lines[following][1])
+                ),
+                end,
+            )
+            result.append((task_id, index, evidence_end))
+    return result
+
+
+def declared_task_section_ranges(
+    lines: list[tuple[str, str]], task_ids: Sequence[str]
+) -> list[tuple[str, int, int]]:
+    """Locate H2 sections whose leading id is exactly a declared task id."""
+    headings: list[tuple[int, str]] = []
+    for index, (_, visible) in enumerate(lines):
+        match = re.match(r"^ {0,3}##\s+(.+?)\s*$", visible.rstrip("\r\n"))
         if match:
-            start = index
-            indent = match.group(1)
-            break
-    if start is None:
-        return None
-    end = len(lines)
-    next_entry = re.compile(rf"^{re.escape(indent)}- id:\s*D-\d+")
-    for index in range(start + 1, len(lines)):
-        if next_entry.match(lines[index]) or lines[index].strip() == "---":
-            end = index
-            break
-    return "".join(lines[start:end]).encode("utf-8")
-
-
-def ipfs_sha256(uri: str) -> str | None:
-    parsed = urlparse(uri)
-    raw = parsed.netloc or parsed.path.lstrip("/").split("/", 1)[0]
-    if raw == "ipfs":
-        raw = parsed.path.lstrip("/").split("/", 1)[0]
-    try:
-        if raw.startswith("Qm"):
-            decoded = base58_decode(raw)
-            return decoded[2:].hex() if decoded[:2] == b"\x12\x20" and len(decoded) == 34 else None
-        if raw.startswith("b"):
-            padding = "=" * ((8 - len(raw[1:]) % 8) % 8)
-            decoded = base64.b32decode((raw[1:].upper() + padding).encode())
-            version, offset = read_varint(decoded, 0)
-            _, offset = read_varint(decoded, offset)
-            algorithm, offset = read_varint(decoded, offset)
-            length, offset = read_varint(decoded, offset)
-            digest = decoded[offset : offset + length]
-            return digest.hex() if version == 1 and algorithm == 0x12 and length == 32 and len(digest) == 32 else None
-    except (ValueError, IndexError):
-        return None
-    return None
-
-
-def base58_decode(value: str) -> bytes:
-    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-    number = 0
-    for character in value:
-        position = alphabet.find(character)
-        if position < 0:
-            raise ValueError("invalid base58")
-        number = number * 58 + position
-    payload = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
-    return b"\0" * (len(value) - len(value.lstrip("1"))) + payload
-
-
-def read_varint(value: bytes, offset: int) -> tuple[int, int]:
-    result = 0
-    shift = 0
-    while offset < len(value):
-        byte = value[offset]
-        offset += 1
-        result |= (byte & 0x7F) << shift
-        if not byte & 0x80:
-            return result, offset
-        shift += 7
-        if shift > 63:
-            break
-    raise ValueError("invalid varint")
+            headings.append((index, match.group(1)))
+    result: list[tuple[str, int, int]] = []
+    for position, (start, heading) in enumerate(headings):
+        task_id = next(
+            (
+                candidate
+                for candidate in task_ids
+                if re.match(rf"^{re.escape(candidate)}(?:\s*:|\s|$)", heading)
+            ),
+            None,
+        )
+        if task_id is None:
+            continue
+        end = headings[position + 1][0] if position + 1 < len(headings) else len(lines)
+        result.append((task_id, start, end))
+    return result
 
 
 def duplicates(values: Iterable[str]) -> set[str]:

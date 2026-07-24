@@ -25,7 +25,9 @@ Create the `reviews/` directory on first use (with a `.gitkeep`-style placeholde
 - `NN` — next zero-padded sequence number within that `reviews/` directory.
 - `target-slug` — lowercase kebab-case of the reviewed artifact (plan/design/spec name).
 - `review-type` — `adversarial-review` (Poke Holes) or `code-review`.
-- `rev` — the state the review examined: for Code Review, the reviewed repo's VCS short revision (append `-dirty` when the tree wasn't frozen); for Poke Holes, the planning root's short revision, falling back to `YYYY-MM-DD` when the planning root isn't versioned.
+- `rev` — the state the review examined: for Code Review, the reviewed repo's
+  native SCM revision. A phase gate requires a frozen durable revision/range;
+  dirty or no-SCM work is not eligible for completion.
 
 Example: `01-arkagent-adversarial-review-a1b2c3d.md`.
 
@@ -55,8 +57,7 @@ all four `sdd-code-review` lanes, and record these frontmatter fields:
 review_scope: phase
 frozen: true
 verdict: Aligned
-reviewed_phase_intent_sha256: "<lowercase SHA-256 of canonical phase projection>"
-reviewed_plan_intent_sha256: "<lowercase SHA-256 of canonical plan README projection>"
+reviewed_planning_revision: "<full planning Git commit reviewed>"
 review_mode: independent # independent | mixed | single-agent
 lane_results:
   - lane: review_plan_drift
@@ -85,16 +86,14 @@ findings`, or `No blocking findings`). Record inspected paths, behaviors, or
 observations even when a lane is clean. `review_mode` records how the lanes ran:
 `independent`, `mixed`, or `single-agent`.
 
-`reviewed_phase_intent_sha256` and `reviewed_plan_intent_sha256` are required,
-lowercase 64-hex SHA-256 digests. At review time, compute them from the phase and
-plan README respectively with the validator's existing `project_artifact`
-normalization, then hash those canonical bytes. The normalization deliberately
-removes lifecycle-only status, timestamp, completion-evidence, and checklist
-changes, while retaining scope, tasks, acceptance criteria, and plan intent.
-Before phase completion the validator recomputes both projections from the
-current planning root and requires an exact digest match. This applies when the
-planning root is external to the reviewed repository as well as when it is in
-that repository.
+`reviewed_planning_revision` is required and is the full Git commit in the
+planning repository at which the phase and plan README were reviewed. Before
+phase completion, the validator loads both artifacts at that commit and compares
+their lifecycle-normalized content with current artifacts. It permits only
+lifecycle fields, completion evidence, and checklist state to change. This
+binding uses the planning SCM identity directly; SDD stores no custom intent
+hashes. A planning SCM without this validated adapter keeps the phase
+non-complete with an explicit diagnostic.
 
 The phase's `Final aligned review` evidence points to this artifact and its
 frozen identity. `Needs changes` or `Blocked` forbids phase completion. Every

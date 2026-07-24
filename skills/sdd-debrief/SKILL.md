@@ -68,9 +68,9 @@ When a plan phase has been completed (or substantially completed) and you want t
       review invalidates it; repeat until the final review is `Aligned` and the
       reviewed phase is materially unchanged (D-0014).
     - Populate `## Phase Completion Evidence` with the verification date,
-      canonical source identity, exact exclusions and identity recheck, a
-      verbatim rollup of each task's evidence, and exact
-      aggregate commands/tools and results. Include the persisted final aligned
+      native source identity, identity recheck, concise task-id and native
+      revision/checkpoint references, and exact aggregate commands/tools and
+      results. Include the persisted final aligned
       review artifact path and frozen revision/range identity using `- Final
       aligned review: <artifact path>; frozen: <exact rev>`; it must exactly
       match frontmatter `rev`. For a Git planning root, commit the exact review
@@ -85,11 +85,10 @@ When a plan phase has been completed (or substantially completed) and you want t
      - The plan README's `phases[]` array
    - Update `updated` dates
    - If this was the final phase and all phases are now complete, populate
-     `## Plan Completion Evidence` under the same rules. Repeat the exact
-     task- and phase-level commands/tools, context, results, and observable
-     evidence in a complete rollup (links alone are insufficient), record the
-     canonical source identity, exact exclusions and identity recheck, then
-     record required
+      `## Plan Completion Evidence` under the same rules. Record concise phase
+      ids, completion revisions/checkpoints, and final review references in the
+      required identity section, not an Evidence Rollup. Record the native source
+      identity and identity recheck, then record required
      plan-level checks. Re-read it, require every final check to have passed,
      and only then set the plan README frontmatter `status` to `complete`.
 

@@ -59,31 +59,23 @@ External dependencies, prerequisites, and assumptions.
 
 <!-- Keep the exact `Pending — not complete.` line until completion. Evidence
 uses the exact labels `Verified`, `Repository`, `VCS`, `Revision / checkpoint`,
-and `Identity recheck`, each as `- <label>: <value>`.
+and `Identity recheck`, each exactly once visibly as `- <label>: <value>`.
 `Verified` is `YYYY-MM-DD`; `Repository` is the exact resolved target root;
-`VCS` is `git`, `git-worktree`, `perforce`, or `none`; record the tested native
-SCM revision/checkpoint. Git adapter: `Revision / checkpoint` is a full 40-hex
-implementation commit; commit implementation before recording evidence, then
-commit only lifecycle/evidence bookkeeping separately. Normal Git completion
-creates no snapshot, projection, content-object, or `evidence/` folder. Only
-fallback dirty Git, Perforce, or no-VCS identity adds
-`Fallback reason`, `Evidence exclusions`, `Governing intent`, `Ignored inputs`,
-`Directory inputs`, and `Content snapshot`; dirty Git uses a full base suffixed
-`-dirty`. `Fallback reason` names the specific VCS or authorization constraint.
-Perforce and no-SCM planning roots may retain fallback handoff evidence but have
-no validated durable lifecycle adapter, so they must remain non-complete.
-`Governing intent` uses `<64-hex SHA-256> at <durable path>; inputs:
-<comma-separated artifact paths and decision ids>`. The fallback
-`Ignored inputs` and `Directory inputs` use `none with <inspection basis>` or
-`paths: <comma-separated repository-relative paths>; <digests/basis>`. The exact
-table columns are `Command | Working directory | Result | Observable evidence`
+`VCS` identifies a validated SCM adapter; record the tested native SCM
+ revision/checkpoint. Git adapter: plan `Revision / checkpoint` is a full
+ 40-hex native Git commit and may be a validated integration merge. The
+ non-merge rule applies only to atomic task implementation evidence; commit
+ implementation before recording evidence, then commit only lifecycle/evidence
+ bookkeeping separately. Dirty Git, no-SCM, and unsupported SCM adapters remain
+ non-complete. The exact table columns are `Command | Working directory | Result | Observable evidence`
 or `Tool / inspection | Context | Result | Observable evidence`. Command
 results use `PASS (exit 0)`; tool/inspection results use `PASS`. `Identity
 recheck` names the tool, an ISO date/time through minutes, and a
-matched/matching identity. Follow shared/completion-evidence.md for identity,
-rollup, and durability rules. A complete rollup uses one
-`### Phase <id> Evidence Rollup` and one `### Task <id> Evidence Rollup` block
-per child and repeats that child's exact command/tool rows in its block. -->
+matched/matching identity. Follow shared/completion-evidence.md for identity and
+durability rules. A complete plan uses `### Completed phase identities` with one
+`- <phase id>: <phase checkpoint>; review: <final review path>` line per phase.
+Record required independent plan rows; do not add child-evidence rollup
+sections. -->
 Pending — not complete.
 
 <!-- Optional — include only when questions are open; a plan cannot be

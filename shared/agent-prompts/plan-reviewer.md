@@ -78,8 +78,7 @@ Prospective `verification` and retrospective completion evidence are distinct.
 Flag a plan that treats its criteria as proof, omits required pending evidence
 sections, or marks an entity complete without the exact commands/tools,
  context, observed results, the tested native SCM revision/checkpoint (the
- clearly labeled Git adapter uses an implementation commit) or
-durable fallback capture when applicable, and immediate identity recheck required by
+  clearly labeled Git adapter uses an implementation commit), and immediate identity recheck required by
 `shared/completion-evidence.md`.
 
 ## Output Format

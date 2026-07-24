@@ -45,8 +45,8 @@ Read the active plan and phase frontmatter. Read the decision ledger's frontmatt
 
    **Git adapter:** in a commit-capable Git workflow where commits are
    authorized, this native revision is one scoped implementation commit
-   (D-0011, D-0016, D-0017). Do not create a dirty snapshot or `evidence/`
-   folder merely because the task status is still `in-progress`.
+    (D-0016, D-0017, D-0018). A dirty worktree cannot complete; commit the
+    complete slice before recording completion evidence.
 7. While the task remains `in-progress`, create `### Completion Evidence` if a
    legacy task lacks it, then replace its pending content using
    `shared/completion-evidence.md`:
@@ -65,14 +65,10 @@ Read the active plan and phase frontmatter. Read the decision ledger's frontmatt
      uses that identity with no extra operands. Record `Review
     result: PASS/Aligned`. Other SCMs use their native exact identity; do not
     claim unsupported alternate-diff validation.
-   The normal commit-backed path requires no governing-intent object, snapshot,
-   content-object directory, or evidence folder. Only when a normal commit is
-   genuinely unavailable or unauthorized may the fallback contract capture a
-   canonical manifest and content objects; record that constraint and do not
-   use fallback capture as a substitute for an authorized native revision. Do
-   not paste a claim
-   unsupported by output read in this session or a linked contemporaneous
-   durable record.
+    Do not invent a fallback source identity. Dirty Git, no-SCM, and unsupported
+    SCM adapters remain non-complete until a durable native revision/checkpoint
+    exists. Do not paste a claim unsupported by output read in this session or a
+    linked contemporaneous durable record.
 8. Re-read the task section. Confirm the evidence is present, no pending marker
    remains, at least one command or tool/inspection row exists, every required
    verification behavior is covered, the source-identity recheck still matches

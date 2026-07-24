@@ -1,6 +1,6 @@
 ---
 name: sdd-validate
-description: "Validate SDD artifact structure, status, completion evidence, dependencies, identifiers, and decision-ledger consistency without modifying files. Use before implementation, completion, handoff, or CI; validate plan, check SDD integrity, audit completion evidence."
+description: "Validate SDD artifact structure, status, native-SCM completion evidence, dependencies, identifiers, and decision-ledger consistency without modifying files. Use before implementation, completion, handoff, or CI; validate plan, check SDD integrity, audit completion evidence."
 ---
 
 # Validate SDD Artifacts
@@ -36,9 +36,9 @@ graph even when the scope names its README or one phase (D-0013). Bare names
 that match multiple artifact roots are rejected as ambiguous; use the reported
 planning-root-relative path. JSON output lists the exact successfully parsed
 `artifacts_in_scope`, while diagnostics for malformed files under the requested
-scope remain visible. Unresolved
-references remain diagnostics on the artifact that cites them; an existing but
-undiscoverable file is never claimed as validated. PyYAML is a declared plugin dependency in
+scope remain visible. Unresolved references remain diagnostics on the artifact
+that cites them; an existing but undiscoverable file is never claimed as
+validated. PyYAML is a declared plugin dependency in
 `<plugin-root>/requirements.txt`; if it is unavailable, report the validator's
 dependency error and stop rather than silently replacing deterministic checks
 with model judgment. Exit `0` means scripted checks passed, exit `1` means the
@@ -54,11 +54,11 @@ validator remains authoritative for cross-artifact scope resolution, citations,
 and related-graph checks.
 
 Identity mode defaults to `auto`, which performs current target-worktree and
-governing-projection checks for every populated evidence section. Use the
-equivalent explicit `--identity-mode current` immediately before a completion
-transition or tracker closure. Use `--identity-mode historical` only for a
-confirmed historical audit where later legitimate work makes current-source
-comparison inappropriate.
+governing lifecycle-content checks for every populated evidence section. Use
+the equivalent explicit `--identity-mode current` immediately before a
+completion transition or tracker closure. Use `--identity-mode historical` only
+for a confirmed historical audit where later legitimate work makes
+current-source comparison inappropriate.
 
 **Read-only guarantee:** validation never edits, moves, creates, or deletes
 artifacts and never changes status. Report exact findings for a lifecycle skill
@@ -73,13 +73,13 @@ documents when validating any plan lifecycle state.
 ## Checks
 
 The script owns machine-decidable structure, schema, path, identifier, graph,
-review-state, decision-link, durable-digest, and evidence-shape checks below.
-Do not repeat those checks manually or reinterpret a scripted failure. After it
-runs, use model analysis only for semantic sufficiency: whether prose has real
-content, evidence proves the cited behavior and acceptance criteria, aggregate
-evidence covers the deliverable, and differently worded decisions potentially
-conflict. Merge those semantic findings with the script diagnostics in the
-required output format.
+review-state, decision-link, native-SCM identity, and evidence-shape checks
+below. Do not repeat those checks manually or reinterpret a scripted failure.
+After it runs, use model analysis only for semantic sufficiency: whether prose
+has real content, evidence proves the cited behavior and acceptance criteria,
+aggregate evidence covers the deliverable, and differently worded decisions
+potentially conflict. Merge those semantic findings with the script diagnostics
+in the required output format.
 
 For every scoped spec, design, or plan, resolve its explicit `related` graph and
 perform a cross-artifact semantic reconciliation after the script passes its
@@ -149,17 +149,25 @@ Apply `shared/completion-evidence.md` literally:
 - Every task, phase, and plan has its required evidence section.
 - A complete entity has fully conforming retrospective evidence: verification
   date; repository root and VCS kind; exact tested native SCM
-  revision/checkpoint (a Git implementation commit only in the Git adapter) or
-  canonical content snapshot digest and durable artifact for a
-  genuine fallback; a successful immediate identity recheck; exact
-  commands/tools; context/working directory; exit
-  status or result; and specific observable evidence covering prospective
-  verification.
-- **Git adapter:** normal clean-Git evidence contains no fallback projection,
-  snapshot, content-object, or exclusion fields. The implementation revision
-  exists and is an ancestor of the current branch, and the populated planning
-  evidence is present in a committed lifecycle artifact. Later feature commits
-  do not stale an earlier task's immutable implementation revision.
+  revision/checkpoint (for Git, a full native Git revision/checkpoint); a
+  successful immediate identity recheck; exact commands/tools; context/working
+  directory; exit status or result; and specific observable evidence covering
+  prospective verification.
+- Native SCM revisions or checkpoints are the sole durable source identity
+  (D-0018). Never use snapshots, content-object stores, custom intent hashes,
+  retention proofs, fallback projection fields, or verbatim child-evidence
+  rollups. Dirty Git, no-SCM, and an unsupported SCM adapter remain
+  non-complete.
+- **Git adapter:** normal clean-Git evidence contains no synthetic source
+  identity fields. A task's implementation revision exists and is an ancestor
+  of the current branch, and the populated planning evidence is present in a
+  committed lifecycle artifact. A dirty suffix, dirty-worktree snapshot, or
+  worktree state cannot serve as a completion identity. Later feature commits
+  or unrelated worktree edits do not stale an earlier task's clean immutable
+  implementation revision. Phase and plan `Revision / checkpoint` values are
+  full native Git revisions/checkpoints and may name a validated integration
+  merge. This does not relax current phase completion: its final reviewed target
+  worktree must be clean. Do not add a global historical worktree-clean check.
 - Semantically inspect the recorded native revision/checkpoint's diff against
   the task boundary: it must implement that task's complete feature slice,
   exclude other independently complete slices, and leave the named checks
@@ -169,45 +177,43 @@ Apply `shared/completion-evidence.md` literally:
 - Every completed task records a focused review in strict syntax: for Git,
   exactly `git show <full40>` for final-commit review or `git diff
   <full40>..<full40>` for range review before the required complete-task-diff
-  statement, exact
-  reviewed candidate/final native SCM identity, and `Review result:
-  PASS/Aligned`; a phase gate does not substitute for this. **Git
-  review-identity adapter:** accept only the task full commit or
-   `diff: <full40>..<full40>` whose distinct commits exist in the target repository,
-   whose base is the task revision's direct first parent, and whose endpoint is
-   the task revision; the command uses that commit or range with no extra
-  operands. Other SCMs use their native exact
-  identity until a deterministic adapter exists.
+  statement, exact reviewed candidate/final native SCM identity, and
+  `Review result: PASS/Aligned`; a phase gate does not substitute for this.
+  **Git review-identity adapter:** accept only the task full commit or
+  `diff: <full40>..<full40>` whose distinct commits exist in the target
+  repository, whose base is the task revision's direct first parent, and whose
+  endpoint is the task revision; the command uses that commit or range with no
+  extra operands. Other SCMs use their native exact identity until a
+  deterministic adapter exists.
 - Phase evidence covers every task and acceptance criterion and cites a
   persisted, resolved, frozen `Aligned` phase review of the phase document
   across all four stable lanes using `- Final aligned review: <artifact path>;
   frozen: <exact rev>` with exact equality to review frontmatter `rev`. Its
   auditable `review_mode` and exactly four `lane_results` record every lane's
-   PASS/Aligned result, identical reviewed identity, and specific concrete lane
-   evidence rather than a generic conclusion. **Git review-identity adapter:** only
-   an exact `<full40>..<full40>` range with distinct commits is valid; every commit
-   exists in the target repository, the base is an ancestor of the endpoint, and
-   the endpoint equals phase `Revision / checkpoint`. The current target worktree
-    is clean at phase completion; every path touched by every commit after the
-    reviewed endpoint (including merge and reverted/net-zero changes) must be a
-    governing lifecycle path. The canonical phase and plan projections at HEAD
-    must equal the frozen endpoint, so scope, requirements, tasks, and acceptance
-    text cannot change. Other target changes require a new full review.
-   Unsupported
-  target SCM adapters keep the phase non-complete with an explicit diagnostic.
-  **Git lifecycle adapter:** the cited review's exact bytes/frontmatter are
-  committed at planning-root HEAD and still establish its resolved frozen
-  Aligned four-lane state. Perforce and no-SCM planning roots have no validated
-  durable lifecycle adapter, so complete entities are invalid there. Plan evidence repeats exact task/phase evidence
-  rollups and covers the plan deliverable; links alone do not satisfy the
-  record. A material post-review code change requires a fresh full phase review.
-- Fallback dirty Git snapshot manifests match current changed, nonignored untracked,
-  explicitly inventoried ignored, and directory inputs byte-for-byte and by
-  mode; staged/index content matches the tested worktree. Flag fallback capture
-  used merely to postpone an authorized normal Git feature commit. Fallback
-  evidence names the specific constraint that selected it, and every local
-  manifest, projection, and content object is durably committed with the
-  lifecycle evidence (or uses a validated immutable retained URI).
+  PASS/Aligned result, identical reviewed identity, and specific concrete lane
+  evidence rather than a generic conclusion. It records concise task-id/native
+  checkpoint identities, not child-evidence rollups. Its `Revision / checkpoint`
+  is a full native Git revision/checkpoint and may be a validated integration
+  merge. **Git review-identity
+  adapter:** only an exact `<full40>..<full40>` range with distinct commits is
+  valid; every commit exists in the target repository, the base is an ancestor
+  of the endpoint, and the endpoint equals phase `Revision / checkpoint`. The
+  current target worktree is clean at phase completion; every path touched by
+  every commit after the reviewed endpoint (including merge and reverted/net-zero
+  changes) must be a governing lifecycle path. The lifecycle-normalized phase
+  and plan artifacts at HEAD must equal the frozen endpoint, so scope,
+  requirements, tasks, and acceptance text cannot change. Other target changes
+  require a new full review. Unsupported target SCM adapters keep the phase
+  non-complete with an explicit diagnostic. **Git lifecycle adapter:** the
+  cited review's exact bytes/frontmatter are committed at planning-root HEAD and
+  still establish its resolved frozen Aligned four-lane state. Perforce and
+  no-SCM planning roots have no validated durable lifecycle adapter, so complete
+  entities are invalid there. Plan evidence records an independent full native
+  Git revision/checkpoint, which may be a validated integration merge,
+  independent plan checks, and concise phase-id/checkpoint/final-review
+  identities; links alone do not
+  satisfy the record. A material post-review code change requires a fresh full
+  phase review.
 - Non-complete entities may be pending or contain populated evidence awaiting
   validation.
 - Historical complete artifacts without conforming evidence are reported as

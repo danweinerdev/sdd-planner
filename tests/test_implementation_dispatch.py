@@ -75,7 +75,7 @@ class ImplementationDispatchTests(unittest.TestCase):
         self.assertIn("scoped lifecycle commit", implement)
         self.assertNotIn("commit only when the user or repository policy", implement)
 
-    def test_normal_git_completion_does_not_generate_evidence_folders(self):
+    def test_native_scm_completion_does_not_generate_synthetic_source_identity(self):
         contract = (ROOT / "shared" / "completion-evidence.md").read_text(
             encoding="utf-8"
         ).lower()
@@ -83,15 +83,15 @@ class ImplementationDispatchTests(unittest.TestCase):
             encoding="utf-8"
         ).lower()
         self.assertIn("native scm completion", contract)
-        self.assertIn("git adapter: commit first", contract)
-        self.assertIn("normal git completion creates no snapshot manifest", contract)
-        self.assertIn("no governing-intent object", implement)
-        self.assertIn("fallback", contract)
-        self.assertIn("not a reason to postpone", contract)
+        self.assertIn("native scm is the sole durable source identity", contract)
+        self.assertIn("dirty git, no-scm", contract)
+        self.assertIn("do not invent a fallback source identity", implement)
+        self.assertNotIn("content snapshot", contract)
+        self.assertNotIn("governing intent", contract)
 
     def test_decisions_govern_atomic_reviewed_task_boundaries(self):
         decisions = (ROOT / "Decisions" / "decisions.md").read_text(encoding="utf-8")
-        self.assertIn("id: D-0011", decisions)
+        self.assertIn("id: D-0018", decisions)
         self.assertIn("id: D-0016", decisions)
         self.assertIn("id: D-0017", decisions)
         self.assertIn("id: D-0014", decisions)

@@ -120,7 +120,8 @@ decisions:
     tags: [decision-log, validation, python, pyyaml, deterministic-checks]
   - id: D-0011
     kind: decision
-    status: accepted
+    status: superseded
+    superseded_by: D-0018
     date: 2026-07-23
     decided_by: user
     statement: "In commit-capable Git workflows, SDD implementation completes each focused task with a scoped implementation commit before recording completion evidence; the evidence records that tested commit, and content snapshots are fallback identity mechanisms rather than substitutes for normal feature commits."
@@ -198,6 +199,18 @@ decisions:
     scope: [README.md, shared/frontmatter-schema.md, shared/agent-prompts/plan-reviewer.md, shared/templates/plan-phase.md, skills/sdd-plan, skills/sdd-implement, tests]
     tags: [planning, tasks, scm, dependencies, atomicity, bisectability]
     supersedes: D-0012
+  - id: D-0018
+    kind: decision
+    status: accepted
+    date: 2026-07-23
+    decided_by: user
+    statement: "SDD completion evidence uses native SCM revisions or checkpoints as its sole durable source identity and records concise verification and review results; it never builds synthetic filesystem snapshots, content-object stores, custom intent hashes, retention proofs, or verbatim child-evidence rollups."
+    rejected: ["Snapshot dirty worktrees into SDD evidence folders", "Build content-addressed source identity inside the planning system", "Duplicate task evidence verbatim into phase and plan evidence", "Use custom SHA-256 intent projections when native SCM revisions can identify reviewed artifacts"]
+    rationale: "SCM owns source identity while SDD owns planning, verification, and review. Removing the parallel evidence storage system keeps completion auditable without reproducing source control or generating disproportionate artifacts."
+    confirmation: "Completion contracts, templates, skills, and sdd_validate require native SCM identities and concise references only; snapshot/projection/IPFS helpers and fallback fields are absent; dirty or no-SCM work remains non-complete until a durable native checkpoint exists."
+    scope: [README.md, shared/completion-evidence.md, shared/review-artifacts.md, shared/templates/plan-readme.md, shared/templates/plan-phase.md, shared/templates/review.md, skills/sdd-implement, skills/sdd-code-review, skills/sdd-debrief, skills/sdd-validate, scripts/sdd_validate.py, tests]
+    tags: [completion, evidence, scm, snapshots, hashes, rollups, simplification]
+    supersedes: D-0011
 ---
 
 # Decision Ledger

@@ -14,14 +14,13 @@ rev: "{{REV}}"
 # concrete observation naming inspected paths, behaviors, or observations, not a
 # generic conclusion such as "passed", "ok", "aligned", "success", or "no findings".
 # Its nonempty rev must exactly match the `frozen:` identity in phase completion
-# evidence. Compute the two digests as lowercase SHA-256 values over the canonical
-# `project_artifact` projections at review time. Other reviews may omit these fields
-# or record their actual non-phase state.
+# evidence. `reviewed_planning_revision` is the exact full native planning Git
+# commit at which the phase and plan intent were reviewed. Other reviews may omit
+# these fields or record their actual non-phase state.
 # review_scope: phase
 # frozen: true
 # verdict: Aligned
-# reviewed_phase_intent_sha256: "<sha256(project_artifact(phase))>"
-# reviewed_plan_intent_sha256: "<sha256(project_artifact(plan README))>"
+# reviewed_planning_revision: "<full40 planning Git commit>"
 # review_mode: independent  # independent | mixed | single-agent
 # lane_results:
 #   - lane: review_plan_drift
